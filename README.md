@@ -8,9 +8,15 @@ This is not a true anti-detect browser and cannot fill TLS / HTTP/2 / Chromium-e
 
 ## Status
 
-- macOS 12+, Swift + WKWebView, single-file implementation (~3000 lines)
-- Usable, but in early 0.1.0. Low-anomaly consistency details are still iterating.
+- macOS 12+, Swift + WKWebView, single-file implementation (~4500 lines)
+- `v0.1.0` baseline is preserved as the stable WKWebView implementation.
+- Current line is `v1.1`: a Safari/WebKit privacy-enhanced release focused on stability, honesty, and low-anomaly profile consistency.
 - macOS only. No Windows / Linux plans.
+
+## Version Lines
+
+- **v1: Safari/WebKit privacy isolation** — this repository. Low-anomaly Safari/WebKit-family profile isolation, no subscription, no Chromium/TLS claims.
+- **v2: Chromium/CEF experiment** — implemented as the isolated [`chromium-v2`](chromium-v2/README.md) subproject. This is the line that owns cleaner per-profile proxy and Chromium user-data isolation.
 
 ## Core Features
 
@@ -22,8 +28,10 @@ This is not a true anti-detect browser and cannot fill TLS / HTTP/2 / Chromium-e
 
 ### Fingerprint Layer
 - 5 built-in presets: MacBook Air 13, MacBook Pro 14, iMac 5K, iPad 13, iPhone 15 Pro
-- One-click randomization (weighted 70% Mac / 20% iPad / 10% iPhone)
+- One-click randomization defaults to a Mac Safari stable fingerprint; iPhone/iPad presets remain explicit choices because large Mac windows make them higher risk
 - Per-profile fingerprint persisted independently
+- Per-profile pinned timezone, resolved from the primary language (for example `en-US` maps to US timezones; `zh-CN` maps to `Asia/Shanghai`)
+- Consistency checks for UA family, language/timezone, screen size, touch capability, and mobile viewport risk
 - Overrides: UserAgent, `navigator.platform / language / languages / hardwareConcurrency / deviceMemory / maxTouchPoints`, `screen.*`, `devicePixelRatio`, `Intl.DateTimeFormat` timezone, `Date.prototype.getTimezoneOffset`, `screen.orientation`
 
 ### Anti-Detection Layer (Enhanced Privacy)
@@ -37,8 +45,19 @@ This is not a true anti-detect browser and cannot fill TLS / HTTP/2 / Chromium-e
 - All hooks are named functions (not anonymous arrows), defeating name-based detection
 
 ### Privacy Layer
-- WebRTC fully disabled (`RTCPeerConnection` etc set to `undefined`, `enumerateDevices` returns empty) — prevents STUN-based real IP leak
+- Per-profile WebRTC protection (`RTCPeerConnection` etc set to `undefined`, `enumerateDevices` returns empty) — prevents STUN-based real IP leak when enabled
 - Global Privacy Control = true
+
+### Profile Backup / Restore
+- Profile config export / import covers: name, homepage, fingerprint, pinned timezone, enhanced privacy, WebRTC protection, and proxy mapping
+- Cookie export / import remains separate
+- Full `WKWebsiteDataStore` cloning is intentionally not promised because it is not stable across WebKit/macOS versions
+
+### Proxy Mapping / IP Check
+- Per-profile proxy mapping can be saved as Direct, Follow System, HTTP, or SOCKS5
+- The app can check the configured egress IP, country, and ASN/org with `URLSession`
+- It warns when multiple saved profiles share the same proxy mapping or last detected egress IP
+- WKWebView v1 does **not** guarantee clean per-profile proxy enforcement; use external tools such as `sing-box`, Clash, Surge, VPS SOCKS5, or residential proxies behind local entries like `127.0.0.1:18001`
 
 ### Browser Basics
 - Multi-tab (aggregated via OS-level windows)
@@ -56,7 +75,8 @@ Stated honestly. For high-adversary scenarios (Fortune 500 anti-fraud, hard Clou
 - **WebRTC real-IP leak**: mitigated by disabling the WebRTC API entirely. Not suitable if your workflow requires WebRTC.
 - **`window.outerWidth / outerHeight`**: not rewritten. The real Mac window dimensions remain exposed, which will conflict with `screen.width=393` (iPhone preset). Intentional tradeoff to preserve a usable Mac viewport.
 - **CSS `device-width / orientation` media queries**: partially covered (hover/pointer). Full viewport media queries not rewritten.
-- **Web Worker / iframe isolation context**: injection uses `forMainFrameOnly: false` so iframes are covered. Worker context coverage not yet verified.
+- **Web Worker / iframe isolation context**: iframe values are tested in the built-in fingerprint page. Worker values are also tested; if Worker observable values do not match the main profile, the page explicitly reports "Worker exposure is not controlled."
+- **Per-profile proxy in WKWebView**: v1 stores proxy mappings and can test them with `URLSession`, but it does not claim clean WKWebView per-profile proxy isolation.
 - **macOS 12 / 13**: `WKWebsiteDataStore` doesn't support per-identifier instances. Multiple profiles share the default store — degraded to "fingerprint-only isolation, no cookie isolation". macOS 14+ recommended.
 - **iOS device presets (iPhone / iPad)**: UA + screen swap fine, but `safe-area-inset`, font lists, and some `window.matchMedia` viewport queries will leak. Mac presets are more reliable.
 
@@ -97,11 +117,14 @@ Requires Xcode Command Line Tools.
 
 ## Roadmap
 
+- [x] v1.1 timezone strategy and consistency checks
+- [x] v1.1 iframe / Worker diagnostic coverage
+- [x] v1.1 profile config backup / restore
+- [x] v1.1 proxy mapping and egress IP check panel
+- [x] v2 Chromium launcher subproject with independent `user-data-dir`, launch args, proxy mapping, IP check, and local fingerprint test page
 - [ ] HTTP header `Accept-Language` / `Sec-CH-UA` sub-request coverage (not just main request)
-- [ ] `screen` getter via `Object.defineProperty` on Worker scope (if WKWebView allows)
-- [ ] Per-profile proxy (HTTP / SOCKS5)
+- [ ] Replace v2 launcher layer with embedded CEF once dependency size and packaging are accepted
 - [ ] Fingerprint template import / export (community sharing)
-- [ ] Profile backup / restore (cookie export + fingerprint export framework already in place; end-to-end not complete)
 
 ## License
 

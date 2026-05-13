@@ -8,9 +8,15 @@
 
 ## 现状
 
-- macOS 12+，Swift + WKWebView 单文件实现，约 3000 行
-- 已可用，处于 0.1.0 早期阶段。还在迭代低异常一致性细节
+- macOS 12+，Swift + WKWebView 单文件实现，约 4500 行
+- `v0.1.0` 已作为稳定 WKWebView 基线保留
+- 当前线是 `v1.1`：Safari/WebKit 隐私增强版，重点是稳定、好用、诚实、低异常
 - 仅 macOS，暂无 Windows / Linux 计划
+
+## 版本线
+
+- **v1：Safari/WebKit 隐私隔离版** — 当前仓库。做 Safari/WebKit 家族低异常多空间隔离，不收订阅费，也不声称能补 Chromium/TLS 级指纹。
+- **v2：Chromium/CEF 实验版** — 已作为独立 [`chromium-v2`](chromium-v2/README.zh-CN.md) 子项目落地。这条线负责更干净的 per-profile proxy 和 Chromium user-data 隔离。
 
 ## 核心能力
 
@@ -22,8 +28,10 @@
 
 ### 指纹层
 - 5 个内置预设：MacBook Air 13, MacBook Pro 14, iMac 5K, iPad 13, iPhone 15 Pro
-- 一键随机化（70% Mac / 20% iPad / 10% iPhone 加权）
+- 一键随机化默认生成 Mac Safari 稳定指纹；iPhone/iPad 作为显式预设保留，因为大 Mac 窗口下移动预设风险更高
 - Per-Profile 指纹独立持久化
+- 每个 Profile 固定时区，按主语言解析（例如 `en-US` 映射美国时区，`zh-CN` 映射 `Asia/Shanghai`）
+- 一致性检查覆盖 UA 家族、语言/时区、屏幕尺寸、触控能力和移动预设窗口风险
 - 覆盖：UserAgent、`navigator.platform/language/languages/hardwareConcurrency/deviceMemory/maxTouchPoints`、`screen.*`、`devicePixelRatio`、`Intl.DateTimeFormat` 时区、`Date.prototype.getTimezoneOffset`、`screen.orientation`
 
 ### 抗检测层（增强隐私）
@@ -37,8 +45,19 @@
 - 全部 hook 命名化（不是匿名箭头），过名字检测
 
 ### 隐私层
-- WebRTC 全栈关闭（`RTCPeerConnection` 等设为 `undefined`，`enumerateDevices` 返回空），防 STUN 真实 IP 泄露
+- 每个 Profile 独立 WebRTC 防护（开启时 `RTCPeerConnection` 等设为 `undefined`，`enumerateDevices` 返回空），防 STUN 真实 IP 泄露
 - Global Privacy Control = true
+
+### Profile 备份 / 恢复
+- Profile 配置导出 / 导入覆盖：名称、首页、指纹、固定时区、增强隐私、WebRTC 防护和代理映射
+- Cookie 继续单独导入 / 导出
+- 不承诺完整克隆 `WKWebsiteDataStore`，因为它跨 WebKit/macOS 版本不够稳定
+
+### 代理映射 / 出口 IP 检测
+- 每个 Profile 可保存代理映射：直连、跟随系统、HTTP、SOCKS5
+- App 可用 `URLSession` 检测该配置的出口 IP、国家和 ASN/组织
+- 多个 Profile 使用相同代理映射或上次检测到相同出口 IP 时会提示风险
+- WKWebView v1 **不保证**干净的 per-profile proxy 强制接管；建议把 `127.0.0.1:18001` 这类本地入口背后接到 `sing-box`、Clash、Surge、VPS SOCKS5 或住宅代理
 
 ### 浏览器基础
 - 多标签（OS 级窗口聚合）
@@ -56,7 +75,8 @@
 - **WebRTC 真 IP 泄露**：通过禁用 WebRTC API 来防。如果业务必须 WebRTC，本工具不适合。
 - **`window.outerWidth / outerHeight`**：未改写。Mac 窗口真实尺寸暴露。和 `screen.width=393`（iPhone 预设）会有矛盾。这是为了保留可用的 Mac 窗口尺寸做的取舍。
 - **CSS `device-width / orientation` media query**：部分覆盖（hover/pointer），完整尺寸 media 未改写。
-- **Web Worker / iframe 隔离上下文**：注入用 `forMainFrameOnly: false` 已覆盖 iframe；Worker 上下文是否同样注入待验证。
+- **Web Worker / iframe 隔离上下文**：内置指纹检测页会检测 iframe 值。Worker 也会检测；如果 Worker 可观察值与主页面指纹不一致，会明确显示“Worker 暴露不可控”。
+- **WKWebView per-profile proxy**：v1 只保存代理映射，并可用 `URLSession` 检测该配置；不声称 WKWebView 已被干净地 per-profile 强制代理。
 - **macOS 12 / 13**：`WKWebsiteDataStore` 不支持 per-identifier，多 Profile 共享默认 Store 退化为"只有指纹区分，不隔离 Cookie"。建议 macOS 14+。
 - **iOS 设备预设（iPhone / iPad）**：UA + screen 可换，但 safe-area-inset、字体列表、`window.matchMedia` 的部分 viewport 查询会穿帮。Mac 预设更稳。
 
@@ -97,11 +117,14 @@ swift build -c release
 
 ## 路线图
 
+- [x] v1.1 时区策略和一致性检查
+- [x] v1.1 iframe / Worker 检测覆盖
+- [x] v1.1 Profile 配置备份 / 恢复
+- [x] v1.1 代理映射与出口 IP 检测面板
+- [x] v2 Chromium launcher 子项目：独立 `user-data-dir`、启动参数、代理映射、IP 检测和本地指纹检测页
 - [ ] HTTP 头 `Accept-Language` / `Sec-CH-UA` 子请求覆盖（不只主请求）
-- [ ] `screen` getter 通过 Object.defineProperty on Worker scope（如果 WKWebView 允许）
-- [ ] Per-Profile 代理设置（HTTP / SOCKS5）
+- [ ] 等依赖体积和打包方案接受后，把 v2 launcher 层替换成嵌入式 CEF
 - [ ] 指纹模板导入导出（社区共享）
-- [ ] Profile 备份 / 恢复（已有 Cookie 导出 + 指纹导出框架，未完整端到端）
 
 ## License
 

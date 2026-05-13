@@ -3,20 +3,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "MultiProfileFingerprintBrowser",
+    name: "ChromiumFingerprintBrowser",
     platforms: [
         .macOS(.v12),
     ],
     products: [
-        .executable(name: "MultiProfileFingerprintBrowser", targets: ["MultiProfileFingerprintBrowser"]),
+        .executable(name: "ChromiumFingerprintBrowser", targets: ["ChromiumFingerprintBrowser"]),
     ],
     targets: [
         .executableTarget(
-            name: "MultiProfileFingerprintBrowser",
+            name: "ChromiumFingerprintBrowser",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CFNetwork"),
-                .linkedFramework("WebKit"),
                 .linkedFramework("UniformTypeIdentifiers"),
             ]
         ),

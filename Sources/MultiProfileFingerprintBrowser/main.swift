@@ -1,4 +1,5 @@
 import AppKit
+import CFNetwork
 import Darwin
 import Foundation
 import UniformTypeIdentifiers
@@ -19,6 +20,8 @@ private func t(_ en: String, _ zh: String) -> String {
 private var appDisplayName: String {
     t("Multi-Profile Fingerprint Browser", "多账号隔离指纹浏览器")
 }
+private let appIconResourceName = "AppIcon"
+private let appIconResourceExtension = "icns"
 private let mainFrameDefaultsKey = "FingerprintBrowser.MainWindowFrame"
 private let webZoomDefaultsKey = "FingerprintBrowser.WebViewZoom"
 private let minimumWebZoom: CGFloat = 0.85
@@ -35,19 +38,35 @@ private let profileHomepageDefaultsPrefix = "FingerprintBrowser.ProfileHomepage.
 private let profileFingerprintDefaultsPrefix = "FingerprintBrowser.ProfileFingerprint."
 private let profileFingerprintDisabledDefaultsPrefix = "FingerprintBrowser.ProfileFingerprintDisabled."
 private let profileEnhancedPrivacyDefaultsPrefix = "FingerprintBrowser.ProfileEnhancedPrivacy."
+private let profileWebRTCProtectionDefaultsPrefix = "FingerprintBrowser.ProfileWebRTCProtection."
+private let profileProxyDefaultsPrefix = "FingerprintBrowser.ProfileProxy."
+private let profileLastEgressIPDefaultsPrefix = "FingerprintBrowser.ProfileLastEgressIP."
 private let webRTCProtectionDefaultsKey = "FingerprintBrowser.WebRTCProtectionEnabled"
 private var singleInstanceLockFileDescriptor: CInt = -1
+
+private extension Notification.Name {
+    static let switchToMacStablePresetRequested = Notification.Name("FingerprintBrowser.SwitchToMacStablePresetRequested")
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private var mainController: BrowserWindowController?
     private var incognitoControllers: [BrowserWindowController] = []
     private var keyMonitor: Any?
+    private var statusItem: NSStatusItem?
     private var profilesMenu: NSMenu?
     private var webRTCProtectionItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        configureApplicationIcon()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(switchCurrentProfileToMacStablePreset(_:)),
+            name: .switchToMacStablePresetRequested,
+            object: nil
+        )
         buildMenu()
+        installStatusItem()
         installKeyboardZoomShortcuts()
         let needsIsolationFallbackNotice = reconcileProfileIsolationOnLaunch()
         ProfileStore.ensurePrivacyBaseline()
@@ -69,6 +88,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
                 self?.presentIsolationFallbackNotice()
             }
         }
+    }
+
+    private func configureApplicationIcon() {
+        guard let image = Self.loadAppIcon() else {
+            return
+        }
+        NSApp.applicationIconImage = image
+    }
+
+    private func installStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = item
+
+        if let button = item.button {
+            button.image = Self.loadAppIcon(fitting: NSSize(width: 22, height: 22))
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.alignment = .center
+            button.toolTip = appDisplayName
+        }
+
+        let menu = NSMenu(title: appDisplayName)
+        let showItem = menu.addItem(withTitle: t("Show Browser", "显示浏览器"), action: #selector(showMainWindow(_:)), keyEquivalent: "")
+        showItem.target = self
+        let incognitoItem = menu.addItem(withTitle: t("New Incognito Window", "新建无痕窗口"), action: #selector(openIncognitoWindow(_:)), keyEquivalent: "")
+        incognitoItem.target = self
+        menu.addItem(NSMenuItem.separator())
+        let privacyItem = menu.addItem(withTitle: t("Privacy Status…", "隐私状态..."), action: #selector(showPrivacyStatus(_:)), keyEquivalent: "")
+        privacyItem.target = self
+        let testItem = menu.addItem(withTitle: t("Open Fingerprint Test Page", "打开指纹检测页"), action: #selector(openFingerprintTestPage(_:)), keyEquivalent: "")
+        testItem.target = self
+        menu.addItem(NSMenuItem.separator())
+        let quitItem = menu.addItem(withTitle: t("Quit \(appDisplayName)", "退出\(appDisplayName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+
+        item.menu = menu
+    }
+
+    private static func loadAppIcon(fitting size: NSSize? = nil) -> NSImage? {
+        let sourceImage: NSImage?
+        if let iconURL = Bundle.main.url(forResource: appIconResourceName, withExtension: appIconResourceExtension) {
+            sourceImage = NSImage(contentsOf: iconURL)
+        } else {
+            sourceImage = NSApp.applicationIconImage
+        }
+
+        guard let image = sourceImage?.copy() as? NSImage else {
+            return nil
+        }
+        if let size {
+            image.size = size
+        }
+        return image
+    }
+
+    @objc private func showMainWindow(_ sender: Any?) {
+        if let controller = mainController {
+            controller.show()
+        } else {
+            rebuildMainController()
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func reconcileProfileIsolationOnLaunch() -> Bool {
@@ -112,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     func applicationWillTerminate(_ notification: Notification) {
         mainController?.persistMainWindowFrame()
+        NotificationCenter.default.removeObserver(self)
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
         }
@@ -286,8 +368,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
 
     @objc private func toggleWebRTCProtection(_ sender: Any?) {
-        let enabled = !PrivacySettings.isWebRTCProtectionRequested()
-        PrivacySettings.setWebRTCProtectionEnabled(enabled)
+        let profileID = ProfileStore.currentProfileID()
+        let enabled = !PrivacySettings.isWebRTCProtectionRequested(for: profileID)
+        PrivacySettings.setWebRTCProtectionEnabled(enabled, for: profileID)
         updateWebRTCProtectionMenuItem()
 
         let currentURL = mainController?.currentURL()
@@ -303,11 +386,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         )
         let onOff: (Bool) -> String = { $0 ? t("On", "开启") : t("Off", "关闭") }
         let enhancedPrivacyText = onOff(ProfileStore.isEnhancedPrivacyEnabled(for: profile.id))
-        let webRTCText = onOff(PrivacySettings.isWebRTCProtectionEnabled())
+        let webRTCText = onOff(PrivacySettings.isWebRTCProtectionEnabled(for: profile.id))
+        let timezoneText = fingerprint?.timezone ?? t("Not pinned", "未固定")
+        let proxyText = ProfileStore.proxyConfig(for: profile.id).summary
+        let lastIPText = ProfileStore.lastEgressIP(for: profile.id) ?? t("Not checked", "未检测")
         let assessment = FingerprintCatalog.privacyAssessment(
             fingerprint: fingerprint,
             enhancedPrivacyEnabled: ProfileStore.isEnhancedPrivacyEnabled(for: profile.id),
-            webRTCProtectionEnabled: PrivacySettings.isWebRTCProtectionEnabled()
+            webRTCProtectionEnabled: PrivacySettings.isWebRTCProtectionEnabled(for: profile.id)
         )
         let isolation: String
         if #available(macOS 14.0, *) {
@@ -326,12 +412,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             当前空间：\(profile.name)
             数据隔离：\(isolation)
             指纹预设：\(fingerprintText)
+            固定时区：\(timezoneText)
             增强隐私模式：\(enhancedPrivacyText)
             WebRTC 防护：\(webRTCText)
+            代理映射：\(proxyText)
+            上次出口 IP：\(lastIPText)
             GPC：JS 信号开启；主导航请求头 Sec-GPC 开启
             URL 追踪参数清理：开启，仅处理顶层导航
             Referrer 控制：开启，跨站顶层导航最多保留来源站点 origin
             Accept-Language：JS 层覆盖；本 App 发起的顶层导航请求会带当前空间语言头，子资源仍由 WKWebView / 系统决定
+            Proxy：v1 仅保存配置并用 URLSession 检测，不保证 WKWebView per-profile 强制接管
             Tracker blocking：未启用
 
             一致性评估：
@@ -342,12 +432,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             Current profile: \(profile.name)
             Data isolation: \(isolation)
             Fingerprint preset: \(fingerprintText)
+            Pinned timezone: \(timezoneText)
             Enhanced privacy: \(enhancedPrivacyText)
             WebRTC protection: \(webRTCText)
+            Proxy mapping: \(proxyText)
+            Last egress IP: \(lastIPText)
             GPC: JS signal enabled; Sec-GPC header on top-level navigation enabled
             URL tracking-param stripping: enabled, top-level navigations only
             Referrer policy: enabled, cross-site top-level navigations keep only origin
             Accept-Language: overridden at JS layer; app-initiated top-level navigations carry the profile language header; sub-resources still controlled by WKWebView / system
+            Proxy: v1 stores config and checks it with URLSession only; WKWebView per-profile proxy is not guaranteed
             Tracker blocking: disabled
 
             Consistency assessment:
@@ -362,6 +456,220 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     @objc private func openFingerprintTestPage(_ sender: Any?) {
         mainController?.loadFingerprintTestPage()
+    }
+
+    @objc private func switchCurrentProfileToMacStablePreset(_ notification: Notification) {
+        let profileID = ProfileStore.currentProfileID()
+        ProfileStore.setFingerprint(FingerprintCatalog.recommendedMacStablePreset(), for: profileID)
+        updateWebRTCProtectionMenuItem()
+        rebuildMainController()
+        mainController?.loadFingerprintTestPage()
+        presentInfo(t(
+            "Switched the current profile to the recommended Mac Safari preset. The real Mac window size was kept unchanged.",
+            "已把当前空间切换为推荐的 Mac Safari 稳定预设。真实 Mac 窗口尺寸保持不变。"
+        ))
+    }
+
+    @objc private func showProxySettingsAction(_ sender: Any?) {
+        let profile = ProfileStore.currentProfile()
+        let currentConfig = ProfileStore.proxyConfig(for: profile.id)
+
+        let alert = NSAlert()
+        alert.messageText = t("Proxy settings for \"\(profile.name)\"", "空间「\(profile.name)」的代理设置")
+        alert.informativeText = t(
+            "This stores the profile → proxy mapping and can check the configured egress IP. WKWebView v1 does not force a clean per-profile proxy; use this as an external node checklist, not as isolation proof.",
+            "这里保存「空间 → 代理」映射，并可检测该配置的出口 IP。WKWebView v1 不强制接管干净的 per-profile 代理；请把它当作外部节点检查表，而不是强隔离证明。"
+        )
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: t("Save", "保存"))
+        alert.addButton(withTitle: t("Check IP", "检测 IP"))
+        alert.addButton(withTitle: t("Cancel", "取消"))
+
+        let modePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26))
+        for mode in ProfileProxyMode.allCases {
+            modePopup.addItem(withTitle: mode.displayName)
+            modePopup.lastItem?.representedObject = mode.rawValue
+        }
+        if let index = ProfileProxyMode.allCases.firstIndex(of: currentConfig.mode) {
+            modePopup.selectItem(at: index)
+        }
+
+        let hostField = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        hostField.placeholderString = "127.0.0.1"
+        hostField.stringValue = currentConfig.host
+
+        let portField = NSTextField(frame: NSRect(x: 0, y: 0, width: 90, height: 24))
+        portField.placeholderString = "18001"
+        portField.stringValue = currentConfig.port.map(String.init) ?? ""
+
+        alert.accessoryView = proxyAccessoryView(modePopup: modePopup, hostField: hostField, portField: portField)
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else {
+            return
+        }
+        guard let config = readProxyConfig(modePopup: modePopup, hostField: hostField, portField: portField) else {
+            return
+        }
+
+        ProfileStore.setProxyConfig(config, for: profile.id)
+        if response == .alertSecondButtonReturn {
+            checkEgressIP(for: profile, config: config)
+        } else {
+            presentInfo(t(
+                "Saved proxy mapping: \(config.summary). WKWebView will still follow WebKit/system networking behavior in v1.",
+                "已保存代理映射：\(config.summary)。v1 中 WKWebView 仍遵循 WebKit/系统网络行为。"
+            ))
+        }
+    }
+
+    private func proxyAccessoryView(modePopup: NSPopUpButton, hostField: NSTextField, portField: NSTextField) -> NSView {
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 132))
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+
+        func row(_ label: String, _ control: NSView) -> NSStackView {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 10
+            let text = NSTextField(labelWithString: label)
+            text.frame.size.width = 92
+            text.alignment = .right
+            row.addArrangedSubview(text)
+            row.addArrangedSubview(control)
+            return row
+        }
+
+        stack.addArrangedSubview(row(t("Mode", "模式"), modePopup))
+        stack.addArrangedSubview(row(t("Host", "主机"), hostField))
+        stack.addArrangedSubview(row(t("Port", "端口"), portField))
+        let note = NSTextField(labelWithString: t(
+            "Recommended: map each profile to a local entry such as 127.0.0.1:18001, backed by sing-box / Clash / Surge / VPS SOCKS5 / residential proxy.",
+            "推荐：每个空间映射到一个本地入口，例如 127.0.0.1:18001，背后由 sing-box / Clash / Surge / VPS SOCKS5 / 住宅代理提供真实出口。"
+        ))
+        note.maximumNumberOfLines = 3
+        note.lineBreakMode = .byWordWrapping
+        note.textColor = .secondaryLabelColor
+        note.frame.size.width = 360
+        stack.addArrangedSubview(note)
+        return stack
+    }
+
+    private func readProxyConfig(modePopup: NSPopUpButton, hostField: NSTextField, portField: NSTextField) -> ProfileProxyConfig? {
+        let rawMode = modePopup.selectedItem?.representedObject as? String
+        let mode = rawMode.flatMap(ProfileProxyMode.init(rawValue:)) ?? .system
+        let host = hostField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawPort = portField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard mode.requiresEndpoint else {
+            return ProfileProxyConfig(mode: mode, host: "", port: nil)
+        }
+        guard !host.isEmpty else {
+            presentError(t("Proxy host is required for HTTP/SOCKS5.", "HTTP/SOCKS5 必须填写代理主机。"))
+            return nil
+        }
+        guard let port = Int(rawPort), (1...65535).contains(port) else {
+            presentError(t("Proxy port must be 1-65535.", "代理端口必须在 1-65535 之间。"))
+            return nil
+        }
+
+        return ProfileProxyConfig(mode: mode, host: host, port: port)
+    }
+
+    private func checkEgressIP(for profile: WebProfile, config: ProfileProxyConfig) {
+        ProxyCheckService.check(config: config) { [weak self] result in
+            guard let self else {
+                return
+            }
+            switch result {
+            case .success(let info):
+                ProfileStore.setLastEgressIP(info.ip, for: profile.id)
+                self.presentInfo(self.proxyCheckSummary(profile: profile, config: config, info: info))
+            case .failure(let error):
+                self.presentError(t(
+                    "Proxy/IP check failed for \(config.summary): \(error.localizedDescription)",
+                    "代理 / IP 检测失败（\(config.summary)）：\(error.localizedDescription)"
+                ))
+            }
+        }
+    }
+
+    private func proxyCheckSummary(profile: WebProfile, config: ProfileProxyConfig, info: EgressIPInfo) -> String {
+        let location = [info.country, info.region, info.city].compactMap { value in
+            value?.isEmpty == false ? value : nil
+        }.joined(separator: " / ")
+        let org = info.org?.isEmpty == false ? info.org! : t("unknown ASN/org", "未知 ASN / 组织")
+        let sameProxyProfiles = profilesSharingProxy(config, excluding: profile.id)
+        let sameIPProfiles = profilesSharingLastEgressIP(info.ip, excluding: profile.id)
+
+        var warnings: [String] = []
+        if !sameProxyProfiles.isEmpty {
+            warnings.append(t(
+                "Same proxy mapping also used by: \(sameProxyProfiles.joined(separator: ", "))",
+                "相同代理映射也被这些空间使用：\(sameProxyProfiles.joined(separator: "、"))"
+            ))
+        }
+        if !sameIPProfiles.isEmpty {
+            warnings.append(t(
+                "Same detected egress IP also seen on: \(sameIPProfiles.joined(separator: ", "))",
+                "相同出口 IP 也在这些空间检测到：\(sameIPProfiles.joined(separator: "、"))"
+            ))
+        }
+        if warnings.isEmpty {
+            warnings.append(t("No other saved profile currently has the same proxy mapping or last detected IP.", "当前没有其他已保存空间使用相同代理映射或上次检测到的相同 IP。"))
+        }
+
+        if preferredLanguageIsChinese {
+            return """
+            当前空间：\(profile.name)
+            代理映射：\(config.summary)
+            出口 IP：\(info.ip)
+            国家 / 地区：\(location.isEmpty ? "未知" : location)
+            ASN / 组织：\(org)
+
+            风险提示：
+            \(warnings.map { "- \($0)" }.joined(separator: "\n"))
+
+            注意：这是 App 用 URLSession 对代理配置做的检测，不代表 WKWebView v1 已强制使用该代理。
+            """
+        }
+        return """
+        Profile: \(profile.name)
+        Proxy mapping: \(config.summary)
+        Egress IP: \(info.ip)
+        Country / region: \(location.isEmpty ? "unknown" : location)
+        ASN / org: \(org)
+
+        Risk notes:
+        \(warnings.map { "- \($0)" }.joined(separator: "\n"))
+
+        Note: this is a URLSession check of the saved proxy config. It does not prove WKWebView v1 is forced through that proxy.
+        """
+    }
+
+    private func profilesSharingProxy(_ config: ProfileProxyConfig, excluding profileID: String) -> [String] {
+        guard let key = config.mappingKey else {
+            return []
+        }
+        return ProfileStore.loadProfiles().compactMap { profile in
+            guard profile.id != profileID,
+                  ProfileStore.proxyConfig(for: profile.id).mappingKey == key else {
+                return nil
+            }
+            return profile.name
+        }
+    }
+
+    private func profilesSharingLastEgressIP(_ ip: String, excluding profileID: String) -> [String] {
+        ProfileStore.loadProfiles().compactMap { profile in
+            guard profile.id != profileID,
+                  ProfileStore.lastEgressIP(for: profile.id) == ip else {
+                return nil
+            }
+            return profile.name
+        }
     }
 
     @objc private func goToURLAction(_ sender: Any?) {
@@ -531,8 +839,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let panel = NSSavePanel()
         panel.title = "Export Profile"
         panel.message = t(
-            "Export current profile config: name, homepage, fingerprint preset, and enhanced-privacy setting. Cookies and site data are not exported.",
-            "导出当前空间配置：名称、首页、指纹预设和增强隐私设置。不会导出 cookies 或网站数据。"
+            "Export current profile config: name, homepage, fingerprint, timezone, enhanced privacy, WebRTC, and proxy mapping. Cookies and site data are not exported.",
+            "导出当前空间配置：名称、首页、指纹、时区、增强隐私、WebRTC 和代理映射。不会导出 cookies 或网站数据。"
         )
         panel.prompt = "Export"
         panel.allowedContentTypes = [.json]
@@ -704,6 +1012,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         ProfileStore.removeHomepage(for: profile.id)
         ProfileStore.setFingerprint(nil, for: profile.id)
         ProfileStore.setEnhancedPrivacyEnabled(false, for: profile.id)
+        PrivacySettings.remove(for: profile.id)
+        ProfileStore.removeProxyConfig(for: profile.id)
+        ProfileStore.removeLastEgressIP(for: profile.id)
         ProfileStore.setCurrentProfileID(defaultProfileID)
         rebuildMainController()
         if #available(macOS 14.0, *), let uuid = UUID(uuidString: profile.id) {
@@ -758,6 +1069,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         enhancedItem.state = ProfileStore.isEnhancedPrivacyEnabled(for: currentID) ? .on : .off
         let testItem = menu.addItem(withTitle: t("Open Fingerprint Test Page", "打开指纹检测页"), action: #selector(openFingerprintTestPage(_:)), keyEquivalent: "")
         testItem.target = self
+        let proxyItem = menu.addItem(withTitle: t("Proxy Settings & IP Check…", "代理设置与出口 IP 检测…"), action: #selector(showProxySettingsAction(_:)), keyEquivalent: "")
+        proxyItem.target = self
         menu.addItem(NSMenuItem.separator())
         let setHomeItem = menu.addItem(withTitle: t("Set Homepage for Current Profile…", "设置当前空间首页…"), action: #selector(setProfileHomepageAction(_:)), keyEquivalent: "")
         setHomeItem.target = self
@@ -867,8 +1180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
 
     private func updateWebRTCProtectionMenuItem() {
-        webRTCProtectionItem?.title = t("Enable WebRTC Protection", "启用 WebRTC 防护")
-        webRTCProtectionItem?.state = PrivacySettings.isWebRTCProtectionEnabled() ? .on : .off
+        webRTCProtectionItem?.title = t("Enable WebRTC Protection (current profile)", "启用 WebRTC 防护（当前空间）")
+        webRTCProtectionItem?.state = PrivacySettings.isWebRTCProtectionEnabled(for: ProfileStore.currentProfileID()) ? .on : .off
     }
 
     private func createProfileFromCurrent(named name: String, copyCookies: Bool) {
@@ -884,6 +1197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         ProfileStore.setFingerprint(FingerprintCatalog.randomProfile(), for: newProfile.id)
         ProfileStore.setEnhancedPrivacyEnabled(ProfileStore.isEnhancedPrivacyEnabled(for: sourceID), for: newProfile.id)
+        PrivacySettings.setWebRTCProtectionEnabled(PrivacySettings.isWebRTCProtectionEnabled(for: sourceID), for: newProfile.id)
+        ProfileStore.setProxyConfig(ProfileStore.proxyConfig(for: sourceID), for: newProfile.id)
 
         let switchToNewProfile = { [weak self] in
             ProfileStore.setCurrentProfileID(newProfile.id)
@@ -908,14 +1223,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     private func exportCurrentProfile(to url: URL) {
         let profile = ProfileStore.currentProfile()
         let document = ProfileExportDocument(
-            schemaVersion: 1,
+            schemaVersion: 2,
             exportedAt: Date(),
             sourceProfileID: profile.id,
             name: profile.name,
             homepage: ProfileStore.homepageString(for: profile.id),
             fingerprint: ProfileStore.fingerprint(for: profile.id),
             fingerprintDisabled: ProfileStore.isFingerprintDisabled(for: profile.id),
-            enhancedPrivacyEnabled: ProfileStore.isEnhancedPrivacyEnabled(for: profile.id)
+            enhancedPrivacyEnabled: ProfileStore.isEnhancedPrivacyEnabled(for: profile.id),
+            webRTCProtectionEnabled: PrivacySettings.isWebRTCProtectionEnabled(for: profile.id),
+            timezone: ProfileStore.fingerprint(for: profile.id)?.timezone,
+            proxy: ProfileStore.proxyConfig(for: profile.id)
         )
 
         do {
@@ -942,7 +1260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let document = try decoder.decode(ProfileExportDocument.self, from: data)
-            guard document.schemaVersion == 1 else {
+            guard (1...2).contains(document.schemaVersion) else {
                 presentError(t("Profile JSON version not supported.", "Profile JSON 版本不支持。"))
                 return
             }
@@ -959,11 +1277,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
                 ProfileStore.setHomepage(url, for: profile.id)
             }
             if let fingerprint = document.fingerprint {
-                ProfileStore.setFingerprint(fingerprint, for: profile.id)
+                if let timezone = document.timezone, fingerprint.timezone == nil {
+                    ProfileStore.setFingerprint(fingerprint.withTimezone(timezone), for: profile.id)
+                } else {
+                    ProfileStore.setFingerprint(fingerprint, for: profile.id)
+                }
             } else {
                 ProfileStore.disableFingerprint(for: profile.id)
             }
             ProfileStore.setEnhancedPrivacyEnabled(document.enhancedPrivacyEnabled, for: profile.id)
+            PrivacySettings.setWebRTCProtectionEnabled(document.webRTCProtectionEnabled ?? true, for: profile.id)
+            ProfileStore.setProxyConfig(document.proxy ?? .systemDefault, for: profile.id)
             ProfileStore.setCurrentProfileID(profile.id)
             updateWebRTCProtectionMenuItem()
             rebuildMainController()
@@ -1109,6 +1433,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     private var closeHandler: (() -> Void)?
     private var currentZoom: CGFloat = BrowserWindowController.savedWebZoom()
     private var isDisposing = false
+    private var isInternalFingerprintTestPage = false
 
     init(
         initialURL: URL?,
@@ -1212,11 +1537,13 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     func loadFingerprintTestPage() {
+        isInternalFingerprintTestPage = true
         webView.stopLoading()
         webView.loadHTMLString(Self.fingerprintTestHTML, baseURL: nil)
     }
 
     private func loadURLOrStartPage(_ url: URL, sourceURL: URL?) {
+        isInternalFingerprintTestPage = false
         if Self.isDefaultHomepage(url) {
             loadStartPage()
             return
@@ -1225,6 +1552,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     private func loadStartPage() {
+        isInternalFingerprintTestPage = false
         webView.stopLoading()
         let resolvedProfileID = profileID ?? ProfileStore.currentProfileID()
         let profile = ProfileStore.loadProfiles().first(where: { $0.id == resolvedProfileID })
@@ -1237,7 +1565,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             profileName: profileName,
             fingerprintName: fingerprintName,
             enhancedPrivacyEnabled: ProfileStore.isEnhancedPrivacyEnabled(for: resolvedProfileID),
-            webRTCProtectionEnabled: PrivacySettings.isWebRTCProtectionEnabled()
+            webRTCProtectionEnabled: PrivacySettings.isWebRTCProtectionEnabled(for: resolvedProfileID)
         ), baseURL: nil)
     }
 
@@ -1449,6 +1777,10 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
 
         if Self.shouldOpenInsideApp(cleanedURL) {
             if navigationAction.targetFrame?.isMainFrame == true,
+               ["http", "https"].contains(cleanedURL.scheme?.lowercased() ?? "") {
+                isInternalFingerprintTestPage = false
+            }
+            if navigationAction.targetFrame?.isMainFrame == true,
                Self.canRewriteForPrivacy(navigationAction.request),
                Self.needsPrivacyRewrite(request: navigationAction.request, cleanedURL: cleanedURL, sourceURL: webView.url) {
                 webView.load(Self.privacyRequest(for: cleanedURL, sourceURL: webView.url, profileID: profileID))
@@ -1519,6 +1851,11 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "profileAction" {
+            handleProfileActionMessage(message)
+            return
+        }
+
         guard message.name == "downloadBlob",
               message.frameInfo.isMainFrame,
               Self.isTrustedDownloadBridgeOrigin(message.frameInfo.securityOrigin),
@@ -1540,6 +1877,19 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
                 "保存下载失败：\(error.localizedDescription)"
             ))
         }
+    }
+
+    private func handleProfileActionMessage(_ message: WKScriptMessage) {
+        guard isInternalFingerprintTestPage,
+              message.frameInfo.isMainFrame,
+              let payload = message.body as? [String: Any],
+              let action = payload["action"] as? String,
+              action == "switchToMacStablePreset"
+        else {
+            return
+        }
+
+        NotificationCenter.default.post(name: .switchToMacStablePresetRequested, object: nil)
     }
 
     private func clearInjectedZoomState() {
@@ -1791,6 +2141,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     private static func makeConfiguration(messageHandler: WKScriptMessageHandler, persistent: Bool, profileID: String?) -> WKWebViewConfiguration {
         let userContentController = WKUserContentController()
         userContentController.add(messageHandler, name: "downloadBlob")
+        userContentController.add(messageHandler, name: "profileAction")
         userContentController.addUserScript(WKUserScript(source: nativeShimScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         userContentController.addUserScript(WKUserScript(source: privacySignalsScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         userContentController.addUserScript(WKUserScript(source: downloadBridgeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -1801,7 +2152,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             let script = FingerprintCatalog.enhancedPrivacyScript(profileID: profileID, fingerprint: ProfileStore.fingerprint(for: profileID))
             userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         }
-        if PrivacySettings.isWebRTCProtectionEnabled() {
+        if PrivacySettings.isWebRTCProtectionEnabled(for: profileID) {
             userContentController.addUserScript(WKUserScript(source: webRTCBlockerScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         }
 
@@ -2257,6 +2608,21 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         .riskPanel h2 { font-size: 15px; margin: 0 0 10px; }
         .riskPanel ul { margin: 0; padding-left: 18px; }
         .riskPanel li { margin: 6px 0; line-height: 1.45; }
+        .actionButton {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 32px;
+          margin-top: 12px;
+          padding: 0 12px;
+          border: 0;
+          border-radius: 8px;
+          background: #2563eb;
+          color: #ffffff;
+          font: inherit;
+          font-weight: 650;
+          cursor: pointer;
+        }
         .risk-high { color: #b91c1c; }
         .risk-warn { color: #b45309; }
         .risk-ok { color: #15803d; }
@@ -2378,8 +2744,42 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
           }
         };
         const rows = [];
+        const runtime = { iframe: null, worker: null };
         const add = (key, value) => rows.push([key, text(value)]);
+        const setRow = (key, value) => {
+          const target = rows.find((row) => row[0] === key);
+          if (target) target[1] = text(value);
+          else add(key, value);
+        };
         const escapeHTML = (value) => value.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+        const snapshot = (target) => {
+          const n = target.navigator;
+          const s = target.screen;
+          const intl = target.Intl || Intl;
+          return {
+            userAgent: n && n.userAgent,
+            platform: n && n.platform,
+            language: n && n.language,
+            languages: n && n.languages ? Array.from(n.languages) : undefined,
+            timezone: intl && intl.DateTimeFormat ? intl.DateTimeFormat().resolvedOptions().timeZone : undefined,
+            hardwareConcurrency: n && n.hardwareConcurrency,
+            maxTouchPoints: n && n.maxTouchPoints,
+            screen: s ? { width: s.width, height: s.height, availWidth: s.availWidth, availHeight: s.availHeight } : 'unavailable',
+            devicePixelRatio: target.devicePixelRatio,
+            rtc: {
+              RTCPeerConnection: typeof target.RTCPeerConnection,
+              webkitRTCPeerConnection: typeof target.webkitRTCPeerConnection
+            }
+          };
+        };
+        const coreMatchesMain = (probe) => {
+          if (!probe || probe.error) return false;
+          const main = snapshot(window);
+          return probe.userAgent === main.userAgent
+            && probe.language === main.language
+            && JSON.stringify(probe.languages || []) === JSON.stringify(main.languages || [])
+            && probe.timezone === main.timezone;
+        };
         const L = {
           title: '\(isZh ? "风险概览" : "Risk overview")',
           uaFamily: '\(isZh ? "UA 不像 Safari/WebKit 家族，跨引擎伪装风险高" : "UA is not in the Safari/WebKit family; cross-engine spoofing is high risk")',
@@ -2392,7 +2792,16 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
           langTz: '\(isZh ? "语言和时区组合不常见，可能需要检查 profile 预设" : "Language and timezone combination looks uncommon; check the profile preset")',
           touch: '\(isZh ? "移动 UA 缺少触控能力" : "Mobile UA has no touch capability")',
           viewport: '\(isZh ? "移动 UA 搭配过大的窗口尺寸，容易穿帮" : "Mobile UA paired with a very large window can look inconsistent")',
+          macRecommended: '\(isZh ? "Mac 预设是当前 WKWebView v1 推荐稳定基线" : "Mac presets are the recommended stable baseline for WKWebView v1")',
+          switchMac: '\(isZh ? "切换为 Mac 稳定预设" : "Switch to Mac stable preset")',
           screen: '\(isZh ? "屏幕尺寸过小或异常" : "Screen size is unusually small")',
+          iframePending: '\(isZh ? "iframe 检测仍在运行" : "iframe probe is still running")',
+          iframeOk: '\(isZh ? "iframe 可观察值与主页面一致" : "iframe observable values match the main page")',
+          iframeUncontrolled: '\(isZh ? "iframe 可观察值与主页面不一致，需要复查注入覆盖" : "iframe observable values differ from the main page; injection coverage needs review")',
+          workerPending: '\(isZh ? "Worker 检测仍在运行" : "Worker probe is still running")',
+          workerOk: '\(isZh ? "Worker 可观察核心值与主页面一致" : "Worker observable core values match the main page")',
+          workerUnavailable: '\(isZh ? "Worker 不可用或检测失败，无法证明覆盖" : "Worker is unavailable or the probe failed; coverage is not proven")',
+          workerUncontrolled: '\(isZh ? "Worker 暴露不可控：核心值与主页面指纹不一致" : "Worker exposure is not controlled: core values differ from the main fingerprint")',
           noMajor: '\(isZh ? "基础一致性检查未发现高风险项" : "Basic consistency checks found no high-risk item")'
         };
         const buildRiskReport = () => {
@@ -2410,13 +2819,31 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
           const langs = Array.from(navigator.languages || []);
           const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
           if (langs[0] && /^zh/i.test(langs[0]) && !/^Asia\\/(Shanghai|Hong_Kong|Taipei|Macau|Singapore)$/.test(tz)) warn(L.langTz);
+          if (langs[0] && /^en-US/i.test(langs[0]) && !/^America\\//.test(tz)) warn(L.langTz);
           if (/iPhone|iPad/.test(ua)) {
             if ((navigator.maxTouchPoints || 0) < 1) high(L.touch);
             if (innerWidth > 1200 || outerWidth > 1600) warn(L.viewport);
+          } else if (/Macintosh/.test(ua)) {
+            pass(L.macRecommended);
           }
           if (screen.width < 320 || screen.height < 480) warn(L.screen);
+          if (!runtime.iframe) warn(L.iframePending);
+          else if (coreMatchesMain(runtime.iframe)) pass(L.iframeOk);
+          else warn(L.iframeUncontrolled);
+          if (!runtime.worker) warn(L.workerPending);
+          else if (runtime.worker.error || runtime.worker.unavailable) warn(L.workerUnavailable);
+          else if (coreMatchesMain(runtime.worker)) pass(L.workerOk);
+          else high(L.workerUncontrolled);
           const items = findings.length ? findings.concat(ok) : [['risk-ok', L.noMajor]].concat(ok);
-          document.getElementById('riskPanel').innerHTML = '<h2>' + escapeHTML(L.title) + '</h2><ul>' + items.map(([cls, value]) => '<li class="' + cls + '">' + escapeHTML(value) + '</li>').join('') + '</ul>';
+          const canSwitchPreset = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.profileAction);
+          const action = canSwitchPreset ? '<button id="switchMacPreset" class="actionButton" type="button">' + escapeHTML(L.switchMac) + '</button>' : '';
+          document.getElementById('riskPanel').innerHTML = '<h2>' + escapeHTML(L.title) + '</h2><ul>' + items.map(([cls, value]) => '<li class="' + cls + '">' + escapeHTML(value) + '</li>').join('') + '</ul>' + action;
+          const button = document.getElementById('switchMacPreset');
+          if (button) {
+            button.addEventListener('click', () => {
+              window.webkit.messageHandlers.profileAction.postMessage({ action: 'switchToMacStablePreset' });
+            }, { once: true });
+          }
         };
         const render = () => {
           document.getElementById('report').innerHTML = rows.map(([key, value]) => {
@@ -2424,6 +2851,83 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             return `<tr><th>${escapeHTML(key)}</th><td class="${cls}"><code>${escapeHTML(value)}</code></td></tr>`;
           }).join('');
         };
+        const rerenderAsyncState = () => {
+          buildRiskReport();
+          render();
+        };
+        const runIframeProbe = () => new Promise((resolve) => {
+          const iframe = document.createElement('iframe');
+          iframe.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;border:0;';
+          const timeout = setTimeout(() => {
+            iframe.remove();
+            resolve({ error: 'timeout' });
+          }, 2500);
+          const onMessage = (event) => {
+            if (!event.data || event.data.__fpIframeProbe !== true) return;
+            clearTimeout(timeout);
+            window.removeEventListener('message', onMessage);
+            iframe.remove();
+            resolve(event.data.payload || { error: 'empty payload' });
+          };
+          window.addEventListener('message', onMessage);
+          iframe.srcdoc = '<!doctype html><meta charset="utf-8"><script>try { parent.postMessage({ __fpIframeProbe: true, payload: { userAgent: navigator.userAgent, platform: navigator.platform, language: navigator.language, languages: Array.from(navigator.languages || []), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, hardwareConcurrency: navigator.hardwareConcurrency, maxTouchPoints: navigator.maxTouchPoints, screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight }, devicePixelRatio: devicePixelRatio, rtc: { RTCPeerConnection: typeof RTCPeerConnection, webkitRTCPeerConnection: typeof webkitRTCPeerConnection } } }, "*"); } catch (error) { parent.postMessage({ __fpIframeProbe: true, payload: { error: error.message } }, "*"); }<\\/script>';
+          document.body.appendChild(iframe);
+        });
+        const runWorkerProbe = () => new Promise((resolve) => {
+          if (!('Worker' in window)) {
+            resolve({ unavailable: true });
+            return;
+          }
+          const source = `
+            self.onmessage = function () {
+              try {
+                self.postMessage({
+                  userAgent: navigator.userAgent,
+                  platform: navigator.platform,
+                  language: navigator.language,
+                  languages: Array.from(navigator.languages || []),
+                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  hardwareConcurrency: navigator.hardwareConcurrency,
+                  maxTouchPoints: navigator.maxTouchPoints,
+                  hasScreen: typeof screen !== 'undefined',
+                  rtc: {
+                    RTCPeerConnection: typeof RTCPeerConnection,
+                    webkitRTCPeerConnection: typeof webkitRTCPeerConnection
+                  }
+                });
+              } catch (error) {
+                self.postMessage({ error: error.message });
+              }
+            };
+          `;
+          let url = '';
+          try {
+            const blob = new Blob([source], { type: 'application/javascript' });
+            url = URL.createObjectURL(blob);
+            const worker = new Worker(url);
+            const timeout = setTimeout(() => {
+              try { worker.terminate(); } catch (_) {}
+              if (url) URL.revokeObjectURL(url);
+              resolve({ error: 'timeout' });
+            }, 2500);
+            worker.onmessage = (event) => {
+              clearTimeout(timeout);
+              try { worker.terminate(); } catch (_) {}
+              if (url) URL.revokeObjectURL(url);
+              resolve(event.data || { error: 'empty payload' });
+            };
+            worker.onerror = (event) => {
+              clearTimeout(timeout);
+              try { worker.terminate(); } catch (_) {}
+              if (url) URL.revokeObjectURL(url);
+              resolve({ error: event.message || 'worker error' });
+            };
+            worker.postMessage('probe');
+          } catch (error) {
+            if (url) URL.revokeObjectURL(url);
+            resolve({ error: error.message });
+          }
+        });
 
         add('URL', location.href);
         add('User-Agent', navigator.userAgent);
@@ -2464,6 +2968,8 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         add('Canvas hash', canvasHash());
         add('WebGL', webglInfo());
         add('Audio hash', 'pending');
+        add('iframe snapshot', 'pending');
+        add('Worker snapshot', 'pending');
         buildRiskReport();
         render();
 
@@ -2471,6 +2977,16 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
           const target = rows.find((row) => row[0] === 'Audio hash');
           if (target) target[1] = text(audio);
           render();
+        });
+        runIframeProbe().then((result) => {
+          runtime.iframe = result;
+          setRow('iframe snapshot', result);
+          rerenderAsyncState();
+        });
+        runWorkerProbe().then((result) => {
+          runtime.worker = result;
+          setRow('Worker snapshot', result);
+          rerenderAsyncState();
         });
       </script>
     </body>
@@ -2673,6 +3189,67 @@ private struct WebProfile: Codable {
     var createdAt: Date
 }
 
+private enum ProfileProxyMode: String, Codable, CaseIterable {
+    case direct
+    case system
+    case http
+    case socks5
+
+    var requiresEndpoint: Bool {
+        self == .http || self == .socks5
+    }
+
+    var displayName: String {
+        switch self {
+        case .direct:
+            return t("Direct", "直连")
+        case .system:
+            return t("Follow System", "跟随系统")
+        case .http:
+            return "HTTP"
+        case .socks5:
+            return "SOCKS5"
+        }
+    }
+}
+
+private struct ProfileProxyConfig: Codable, Equatable {
+    var mode: ProfileProxyMode
+    var host: String
+    var port: Int?
+
+    static let systemDefault = ProfileProxyConfig(mode: .system, host: "", port: nil)
+
+    var normalized: ProfileProxyConfig {
+        if mode.requiresEndpoint {
+            return ProfileProxyConfig(
+                mode: mode,
+                host: host.trimmingCharacters(in: .whitespacesAndNewlines),
+                port: port
+            )
+        }
+        return ProfileProxyConfig(mode: mode, host: "", port: nil)
+    }
+
+    var summary: String {
+        switch mode {
+        case .direct, .system:
+            return mode.displayName
+        case .http, .socks5:
+            let endpoint = port.map { "\(host):\($0)" } ?? host
+            return "\(mode.displayName) \(endpoint)"
+        }
+    }
+
+    var mappingKey: String? {
+        let value = normalized
+        guard value.mode.requiresEndpoint, let port = value.port, !value.host.isEmpty else {
+            return nil
+        }
+        return "\(value.mode.rawValue)://\(value.host.lowercased()):\(port)"
+    }
+}
+
 private struct ProfileExportDocument: Codable {
     let schemaVersion: Int
     let exportedAt: Date
@@ -2682,6 +3259,94 @@ private struct ProfileExportDocument: Codable {
     let fingerprint: FingerprintProfile?
     let fingerprintDisabled: Bool?
     let enhancedPrivacyEnabled: Bool
+    let webRTCProtectionEnabled: Bool?
+    let timezone: String?
+    let proxy: ProfileProxyConfig?
+}
+
+private struct EgressIPInfo: Codable {
+    let ip: String
+    let country: String?
+    let org: String?
+    let city: String?
+    let region: String?
+}
+
+private enum ProxyCheckService {
+    static func check(config: ProfileProxyConfig, completion: @escaping (Result<EgressIPInfo, Error>) -> Void) {
+        let endpoint = URL(string: "https://ipinfo.io/json")!
+        let session = URLSession(configuration: sessionConfiguration(for: config))
+        let task = session.dataTask(with: endpoint) { data, response, error in
+            defer { session.finishTasksAndInvalidate() }
+            if let error {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
+            }
+            guard let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode),
+                  let data else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(
+                        domain: "FingerprintBrowser.ProxyCheck",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: t("IP lookup failed", "出口 IP 查询失败")]
+                    )))
+                }
+                return
+            }
+            do {
+                let info = try JSONDecoder().decode(EgressIPInfo.self, from: data)
+                DispatchQueue.main.async {
+                    completion(.success(info))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
+        }
+        task.resume()
+    }
+
+    private static func sessionConfiguration(for config: ProfileProxyConfig) -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 18
+
+        switch config.normalized.mode {
+        case .system:
+            break
+        case .direct:
+            configuration.connectionProxyDictionary = [
+                kCFNetworkProxiesHTTPEnable as String: false,
+                kCFNetworkProxiesHTTPSEnable as String: false,
+                kCFNetworkProxiesSOCKSEnable as String: false,
+            ]
+        case .http:
+            if let port = config.port, !config.host.isEmpty {
+                configuration.connectionProxyDictionary = [
+                    kCFNetworkProxiesHTTPEnable as String: true,
+                    kCFNetworkProxiesHTTPProxy as String: config.host,
+                    kCFNetworkProxiesHTTPPort as String: port,
+                    kCFNetworkProxiesHTTPSEnable as String: true,
+                    kCFNetworkProxiesHTTPSProxy as String: config.host,
+                    kCFNetworkProxiesHTTPSPort as String: port,
+                ]
+            }
+        case .socks5:
+            if let port = config.port, !config.host.isEmpty {
+                configuration.connectionProxyDictionary = [
+                    kCFNetworkProxiesSOCKSEnable as String: true,
+                    kCFNetworkProxiesSOCKSProxy as String: config.host,
+                    kCFNetworkProxiesSOCKSPort as String: port,
+                ]
+            }
+        }
+
+        return configuration
+    }
 }
 
 private struct FingerprintProfile: Codable {
@@ -2698,6 +3363,24 @@ private struct FingerprintProfile: Codable {
     let devicePixelRatio: Double
     let maxTouchPoints: Int
     let timezone: String?
+
+    func withTimezone(_ timezone: String) -> FingerprintProfile {
+        FingerprintProfile(
+            presetID: presetID,
+            displayName: displayName,
+            userAgent: userAgent,
+            acceptLanguages: acceptLanguages,
+            platform: platform,
+            hardwareConcurrency: hardwareConcurrency,
+            deviceMemory: deviceMemory,
+            screenWidth: screenWidth,
+            screenHeight: screenHeight,
+            colorDepth: colorDepth,
+            devicePixelRatio: devicePixelRatio,
+            maxTouchPoints: maxTouchPoints,
+            timezone: timezone
+        )
+    }
 }
 
 private enum FingerprintCatalog {
@@ -2787,11 +3470,22 @@ private enum FingerprintCatalog {
     ]
 
     static func preset(for id: String) -> FingerprintProfile? {
-        presets.first { $0.presetID == id }
+        presets.first { $0.presetID == id }.map(normalizedProfile)
+    }
+
+    static func recommendedMacStablePreset() -> FingerprintProfile {
+        preset(for: "mba13") ?? normalizedProfile(presets[0])
     }
 
     static func randomProfile() -> FingerprintProfile {
         randomMacProfile()
+    }
+
+    static func normalizedProfile(_ fingerprint: FingerprintProfile) -> FingerprintProfile {
+        if let timezone = fingerprint.timezone, !timezone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return fingerprint
+        }
+        return fingerprint.withTimezone(resolvedTimezone(for: fingerprint.acceptLanguages, seedKey: fingerprint.presetID))
     }
 
     static func privacyAssessment(
@@ -2864,7 +3558,89 @@ private enum FingerprintCatalog {
         if fingerprint.screenWidth < 320 || fingerprint.screenHeight < 480 {
             issues.append(t("Screen size too small", "屏幕尺寸过小"))
         }
+        if let timezone = fingerprint.timezone,
+           !timezoneLooksCompatible(timezone, languages: fingerprint.acceptLanguages) {
+            issues.append(t("language/timezone combination is uncommon", "语言与时区组合不常见"))
+        }
+        if ua.contains("iPhone") && (fingerprint.screenWidth > 480 || fingerprint.screenHeight > 1000) {
+            issues.append(t("iPhone UA paired with non-phone screen size", "iPhone UA 与非手机屏幕尺寸不一致"))
+        }
+        if ua.contains("iPad") && (fingerprint.screenWidth < 768 || fingerprint.screenHeight < 1000) {
+            issues.append(t("iPad UA paired with non-tablet screen size", "iPad UA 与非平板屏幕尺寸不一致"))
+        }
+        if ua.contains("Macintosh") && fingerprint.screenWidth < 900 {
+            issues.append(t("Mac UA paired with too-small screen size", "Mac UA 与过小屏幕尺寸不一致"))
+        }
         return issues
+    }
+
+    private static func resolvedTimezone(for languages: [String], seedKey: String) -> String {
+        let candidates = timezoneCandidates(for: languages.first ?? defaultAcceptLanguages[0])
+        let index = Int(stableSeed(from: seedKey) % UInt32(candidates.count))
+        return candidates[index]
+    }
+
+    private static func timezoneCandidates(for language: String) -> [String] {
+        let normalized = language.lowercased()
+        if normalized.hasPrefix("zh-hk") {
+            return ["Asia/Hong_Kong"]
+        }
+        if normalized.hasPrefix("zh-tw") {
+            return ["Asia/Taipei"]
+        }
+        if normalized.hasPrefix("zh") {
+            return ["Asia/Shanghai"]
+        }
+        if normalized.hasPrefix("en-us") {
+            return ["America/Los_Angeles", "America/New_York"]
+        }
+        if normalized.hasPrefix("en-gb") {
+            return ["Europe/London"]
+        }
+        if normalized.hasPrefix("en-au") {
+            return ["Australia/Sydney", "Australia/Melbourne"]
+        }
+        if normalized.hasPrefix("ja") {
+            return ["Asia/Tokyo"]
+        }
+        if normalized.hasPrefix("ko") {
+            return ["Asia/Seoul"]
+        }
+        if normalized.hasPrefix("fr") {
+            return ["Europe/Paris"]
+        }
+        if normalized.hasPrefix("de") {
+            return ["Europe/Berlin"]
+        }
+        return ["America/Los_Angeles", "America/New_York"]
+    }
+
+    private static func timezoneLooksCompatible(_ timezone: String, languages: [String]) -> Bool {
+        guard let primary = languages.first?.lowercased() else {
+            return true
+        }
+        if primary.hasPrefix("zh-hk") {
+            return timezone == "Asia/Hong_Kong"
+        }
+        if primary.hasPrefix("zh-tw") {
+            return timezone == "Asia/Taipei"
+        }
+        if primary.hasPrefix("zh") {
+            return ["Asia/Shanghai", "Asia/Hong_Kong", "Asia/Taipei", "Asia/Singapore", "Asia/Macau"].contains(timezone)
+        }
+        if primary.hasPrefix("en-us") {
+            return timezone.hasPrefix("America/")
+        }
+        if primary.hasPrefix("en-gb") {
+            return timezone == "Europe/London"
+        }
+        if primary.hasPrefix("ja") {
+            return timezone == "Asia/Tokyo"
+        }
+        if primary.hasPrefix("ko") {
+            return timezone == "Asia/Seoul"
+        }
+        return true
     }
 
     static func script(for fingerprint: FingerprintProfile) -> String {
@@ -3249,8 +4025,9 @@ private enum FingerprintCatalog {
             (3024, 1964),
         ].randomElement() ?? (1470, 956)
 
+        let presetID = "random-\(UUID().uuidString)"
         return FingerprintProfile(
-            presetID: "random-\(UUID().uuidString)",
+            presetID: presetID,
             displayName: t("Random: Mac Safari stable fingerprint", "随机：Mac Safari 稳定指纹"),
             userAgent: macSafari17UserAgent,
             acceptLanguages: defaultAcceptLanguages,
@@ -3262,7 +4039,7 @@ private enum FingerprintCatalog {
             colorDepth: 24,
             devicePixelRatio: 2.0,
             maxTouchPoints: 0,
-            timezone: nil
+            timezone: resolvedTimezone(for: defaultAcceptLanguages, seedKey: presetID)
         )
     }
 
@@ -3275,8 +4052,9 @@ private enum FingerprintCatalog {
             (1024, 1366),
         ].randomElement() ?? (1024, 1366)
 
+        let presetID = "random-\(UUID().uuidString)"
         return FingerprintProfile(
-            presetID: "random-\(UUID().uuidString)",
+            presetID: presetID,
             displayName: t("Random: iPad-ish", "随机：iPad-ish"),
             userAgent: iPadSafari17UserAgent,
             acceptLanguages: defaultAcceptLanguages,
@@ -3288,7 +4066,7 @@ private enum FingerprintCatalog {
             colorDepth: 24,
             devicePixelRatio: 2.0,
             maxTouchPoints: 10,
-            timezone: nil
+            timezone: resolvedTimezone(for: defaultAcceptLanguages, seedKey: presetID)
         )
     }
 
@@ -3301,8 +4079,9 @@ private enum FingerprintCatalog {
             (430, 932),
         ].randomElement() ?? (393, 852)
 
+        let presetID = "random-\(UUID().uuidString)"
         return FingerprintProfile(
-            presetID: "random-\(UUID().uuidString)",
+            presetID: presetID,
             displayName: t("Random: iPhone-ish", "随机：iPhone-ish"),
             userAgent: iPhoneSafari17UserAgent,
             acceptLanguages: defaultAcceptLanguages,
@@ -3314,7 +4093,7 @@ private enum FingerprintCatalog {
             colorDepth: 24,
             devicePixelRatio: 3.0,
             maxTouchPoints: 5,
-            timezone: nil
+            timezone: resolvedTimezone(for: defaultAcceptLanguages, seedKey: presetID)
         )
     }
 
@@ -3352,6 +4131,12 @@ private enum ProfileStore {
     private static func ensureFingerprintBaseline(for profileID: String) {
         let fingerprintKey = profileFingerprintDefaultsPrefix + profileID
         let disabledKey = profileFingerprintDisabledDefaultsPrefix + profileID
+        if let data = UserDefaults.standard.data(forKey: fingerprintKey),
+           let fingerprint = try? JSONDecoder().decode(FingerprintProfile.self, from: data),
+           fingerprint.timezone == nil {
+            setFingerprint(fingerprint, for: profileID)
+            return
+        }
         guard UserDefaults.standard.data(forKey: fingerprintKey) == nil,
               UserDefaults.standard.object(forKey: disabledKey) == nil else {
             return
@@ -3437,6 +4222,43 @@ private enum ProfileStore {
         UserDefaults.standard.synchronize()
     }
 
+    static func proxyConfig(for profileID: String) -> ProfileProxyConfig {
+        let key = profileProxyDefaultsPrefix + profileID
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let config = try? JSONDecoder().decode(ProfileProxyConfig.self, from: data) else {
+            return .systemDefault
+        }
+        return config.normalized
+    }
+
+    static func setProxyConfig(_ config: ProfileProxyConfig, for profileID: String) {
+        let normalized = config.normalized
+        guard let data = try? JSONEncoder().encode(normalized) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: profileProxyDefaultsPrefix + profileID)
+        UserDefaults.standard.synchronize()
+    }
+
+    static func removeProxyConfig(for profileID: String) {
+        UserDefaults.standard.removeObject(forKey: profileProxyDefaultsPrefix + profileID)
+        UserDefaults.standard.synchronize()
+    }
+
+    static func lastEgressIP(for profileID: String) -> String? {
+        UserDefaults.standard.string(forKey: profileLastEgressIPDefaultsPrefix + profileID)
+    }
+
+    static func setLastEgressIP(_ ip: String, for profileID: String) {
+        UserDefaults.standard.set(ip, forKey: profileLastEgressIPDefaultsPrefix + profileID)
+        UserDefaults.standard.synchronize()
+    }
+
+    static func removeLastEgressIP(for profileID: String) {
+        UserDefaults.standard.removeObject(forKey: profileLastEgressIPDefaultsPrefix + profileID)
+        UserDefaults.standard.synchronize()
+    }
+
     static func fingerprint(for profileID: String?) -> FingerprintProfile? {
         guard let profileID else {
             return nil
@@ -3446,7 +4268,11 @@ private enum ProfileStore {
               let fingerprint = try? JSONDecoder().decode(FingerprintProfile.self, from: data) else {
             return nil
         }
-        return fingerprint
+        let normalized = FingerprintCatalog.normalizedProfile(fingerprint)
+        if normalized.timezone != fingerprint.timezone {
+            setFingerprint(normalized, for: profileID)
+        }
+        return normalized
     }
 
     static func isFingerprintDisabled(for profileID: String) -> Bool {
@@ -3462,7 +4288,8 @@ private enum ProfileStore {
             UserDefaults.standard.synchronize()
             return
         }
-        guard let data = try? JSONEncoder().encode(fingerprint) else {
+        let normalized = FingerprintCatalog.normalizedProfile(fingerprint)
+        guard let data = try? JSONEncoder().encode(normalized) else {
             return
         }
         UserDefaults.standard.set(data, forKey: key)
@@ -3478,19 +4305,31 @@ private enum ProfileStore {
 }
 
 private enum PrivacySettings {
-    static func isWebRTCProtectionRequested() -> Bool {
-        if UserDefaults.standard.object(forKey: webRTCProtectionDefaultsKey) == nil {
+    static func isWebRTCProtectionRequested(for profileID: String?) -> Bool {
+        guard let profileID else {
             return true
         }
-        return UserDefaults.standard.bool(forKey: webRTCProtectionDefaultsKey)
+        let key = profileWebRTCProtectionDefaultsPrefix + profileID
+        if UserDefaults.standard.object(forKey: key) != nil {
+            return UserDefaults.standard.bool(forKey: key)
+        }
+        if UserDefaults.standard.object(forKey: webRTCProtectionDefaultsKey) != nil {
+            return UserDefaults.standard.bool(forKey: webRTCProtectionDefaultsKey)
+        }
+        return true
     }
 
-    static func isWebRTCProtectionEnabled() -> Bool {
-        isWebRTCProtectionRequested()
+    static func isWebRTCProtectionEnabled(for profileID: String?) -> Bool {
+        isWebRTCProtectionRequested(for: profileID)
     }
 
-    static func setWebRTCProtectionEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: webRTCProtectionDefaultsKey)
+    static func setWebRTCProtectionEnabled(_ enabled: Bool, for profileID: String) {
+        UserDefaults.standard.set(enabled, forKey: profileWebRTCProtectionDefaultsPrefix + profileID)
+        UserDefaults.standard.synchronize()
+    }
+
+    static func remove(for profileID: String) {
+        UserDefaults.standard.removeObject(forKey: profileWebRTCProtectionDefaultsPrefix + profileID)
         UserDefaults.standard.synchronize()
     }
 }

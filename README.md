@@ -2,14 +2,14 @@
 
 # Multi-Profile Fingerprint Browser
 
-A free, open-source fingerprint-isolated browser for macOS. Every profile gets its own cookies, storage, and browser fingerprint — remote sites see a different device and a different user per profile.
+A free, open-source Safari/WebKit-family consistent privacy fingerprint browser for macOS. Every profile gets its own cookies, storage, and stable Safari-device fingerprint, reducing cross-account and cross-site fingerprint linkage.
 
-Built to break the paid anti-detect browser monopoly (Multilogin, GoLogin, AdsPower) by offering the same core capabilities as a local, zero-subscription alternative.
+This is not a true anti-detect browser and cannot fill TLS / HTTP/2 / Chromium-engine fingerprint gaps. Its scope is local, zero-subscription, low-anomaly multi-profile privacy: every profile looks like a different Safari/WebKit device, never Chrome or Firefox.
 
 ## Status
 
 - macOS 12+, Swift + WKWebView, single-file implementation (~3000 lines)
-- Usable, but in early 0.1.0. Anti-detection details still iterating.
+- Usable, but in early 0.1.0. Low-anomaly consistency details are still iterating.
 - macOS only. No Windows / Linux plans.
 
 ## Core Features
@@ -43,8 +43,9 @@ Built to break the paid anti-detect browser monopoly (Multilogin, GoLogin, AdsPo
 ### Browser Basics
 - Multi-tab (aggregated via OS-level windows)
 - History back/forward, refresh, zoom, find
+- Local start page that does not connect automatically, with URL/search input
 - Arbitrary https homepage
-- Built-in fingerprint test page (menu → Privacy → Fingerprint Test)
+- Built-in fingerprint test page with risk overview (menu → Privacy → Fingerprint Test)
 
 ## Known Limitations / Gap vs. Commercial Products
 
@@ -59,7 +60,7 @@ Stated honestly. For high-adversary scenarios (Fortune 500 anti-fraud, hard Clou
 - **macOS 12 / 13**: `WKWebsiteDataStore` doesn't support per-identifier instances. Multiple profiles share the default store — degraded to "fingerprint-only isolation, no cookie isolation". macOS 14+ recommended.
 - **iOS device presets (iPhone / iPad)**: UA + screen swap fine, but `safe-area-inset`, font lists, and some `window.matchMedia` viewport queries will leak. Mac presets are more reliable.
 
-For mid-to-low-adversary scenarios (registering multiple ordinary SaaS accounts, blocking site behavior tracking, preventing cross-site device identification, personal multi-account workflows), the current isolation level is generally sufficient.
+For mid-to-low-adversary scenarios (multiple ordinary SaaS accounts, reducing behavior tracking, preventing cross-site device identification, personal multi-account workflows), the current isolation level is generally sufficient. Do not treat it as a replacement for commercial anti-detect browsers in high-adversary environments.
 
 ## Comparison with Commercial Anti-Detect Browsers
 

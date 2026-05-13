@@ -2,14 +2,14 @@
 
 # 多账号隔离指纹浏览器 (Multi-Profile Fingerprint Browser)
 
-一个 macOS 上免费、开源的指纹隔离浏览器。每个账号空间一套独立的 Cookie / 存储 / 浏览器指纹，让远端看到的是不同的设备 + 不同的用户。
+一个 macOS 上免费、开源的 Safari/WebKit 家族一致性隐私指纹浏览器。每个账号空间一套独立的 Cookie / 存储 / 稳定 Safari 设备指纹，目标是减少跨账号、跨站点的指纹关联。
 
-旨在打破 Multilogin / GoLogin / AdsPower 等付费 anti-detect 浏览器的垄断，提供同等核心能力的本地、零订阅替代品。
+它不是“真 anti-detect 浏览器”，也不能补齐 TLS / HTTP/2 / Chromium 内核级指纹。它的定位是本地、零订阅、低异常的多账号隐私浏览器：只伪装成不同 Safari/WebKit 设备，不假装 Chrome / Firefox。
 
 ## 现状
 
 - macOS 12+，Swift + WKWebView 单文件实现，约 3000 行
-- 已可用，处于 0.1.0 早期阶段。还在迭代抗检测细节
+- 已可用，处于 0.1.0 早期阶段。还在迭代低异常一致性细节
 - 仅 macOS，暂无 Windows / Linux 计划
 
 ## 核心能力
@@ -43,8 +43,9 @@
 ### 浏览器基础
 - 多标签（OS 级窗口聚合）
 - 历史前进后退、刷新、缩放、查找
+- 本地起始页，不自动联网，可输入网址或搜索
 - 任意 https 首页
-- 内置指纹检测页（菜单栏 → 隐私 → 指纹检测）
+- 内置指纹检测页 + 风险概览（菜单栏 → 隐私 → 指纹检测）
 
 ## 已知限制 / 与商业产品差距
 
@@ -59,7 +60,7 @@
 - **macOS 12 / 13**：`WKWebsiteDataStore` 不支持 per-identifier，多 Profile 共享默认 Store 退化为"只有指纹区分，不隔离 Cookie"。建议 macOS 14+。
 - **iOS 设备预设（iPhone / iPad）**：UA + screen 可换，但 safe-area-inset、字体列表、`window.matchMedia` 的部分 viewport 查询会穿帮。Mac 预设更稳。
 
-如果你做的是中低对抗场景（注册多个普通 SaaS、防止站点行为追踪、防止跨站设备识别、个人多账号工作流），现状的隔离强度通常够用。
+如果你做的是中低对抗场景（多个普通 SaaS 账号、减少站点行为追踪、防止跨站设备识别、个人多账号工作流），现状的隔离强度通常够用。高强度风控场景不要把它当成商业 anti-detect 浏览器替代品。
 
 ## 与商业 anti-detect 浏览器的对比
 

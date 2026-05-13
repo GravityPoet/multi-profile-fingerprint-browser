@@ -1,0 +1,5 @@
+CFBundleDisplayName = "多账号隔离指纹浏览器";
+CFBundleName = "多账号隔离指纹浏览器";
+NSCameraUsageDescription = "用于网页内的视频或多模态输入。";
+NSMicrophoneUsageDescription = "用于网页内语音输入。";
+NSDownloadsFolderUsageDescription = "保存网页下载的文件到下载文件夹。";

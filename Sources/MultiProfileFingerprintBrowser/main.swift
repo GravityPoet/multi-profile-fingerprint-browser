@@ -5,8 +5,20 @@ import UniformTypeIdentifiers
 import WebKit
 
 private let defaultHomepageURL = URL(string: "about:blank")!
-private let appDisplayName = "多账号隔离指纹浏览器"
 private let appBundleIdentifier = "local.multi-profile-fingerprint-browser"
+
+private var preferredLanguageIsChinese: Bool {
+    guard let code = Locale.preferredLanguages.first?.lowercased() else { return false }
+    return code.hasPrefix("zh")
+}
+
+private func t(_ en: String, _ zh: String) -> String {
+    preferredLanguageIsChinese ? zh : en
+}
+
+private var appDisplayName: String {
+    t("Multi-Profile Fingerprint Browser", "多账号隔离指纹浏览器")
+}
 private let mainFrameDefaultsKey = "FingerprintBrowser.MainWindowFrame"
 private let webZoomDefaultsKey = "FingerprintBrowser.WebViewZoom"
 private let minimumWebZoom: CGFloat = 0.85
@@ -71,10 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     private func presentIsolationFallbackNotice() {
         let alert = NSAlert()
-        alert.messageText = "已回退到默认账号空间"
-        alert.informativeText = "多账号隔离需要 macOS 14 或更新版本。当前系统版本不支持隔离，已自动切回默认空间，避免不同空间共享同一份本地数据。\n\n要使用独立账号空间，请升级到 macOS 14 或更新版本。"
+        alert.messageText = t("Reverted to default profile", "已回退到默认账号空间")
+        alert.informativeText = t(
+            "Multi-profile isolation requires macOS 14 or later. The current macOS version doesn't support isolation, so the app has switched back to the default profile to avoid sharing local data across profiles.\n\nTo use isolated profiles, please upgrade to macOS 14 or later.",
+            "多账号隔离需要 macOS 14 或更新版本。当前系统版本不支持隔离，已自动切回默认空间，避免不同空间共享同一份本地数据。\n\n要使用独立账号空间，请升级到 macOS 14 或更新版本。"
+        )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: t("OK", "知道了"))
         alert.runModal()
     }
 
@@ -105,86 +120,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于\(appDisplayName)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: t("About \(appDisplayName)", "关于\(appDisplayName)"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "退出\(appDisplayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: t("Quit \(appDisplayName)", "退出\(appDisplayName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
         let fileItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "文件")
-        let importCookiesItem = fileMenu.addItem(withTitle: "导入 Cookies...", action: #selector(importCookiesMenu(_:)), keyEquivalent: "")
+        let fileMenu = NSMenu(title: t("File", "文件"))
+        let importCookiesItem = fileMenu.addItem(withTitle: t("Import Cookies…", "导入 Cookies..."), action: #selector(importCookiesMenu(_:)), keyEquivalent: "")
         importCookiesItem.target = self
-        let exportCookiesItem = fileMenu.addItem(withTitle: "导出 Cookies...", action: #selector(exportCookiesMenu(_:)), keyEquivalent: "")
+        let exportCookiesItem = fileMenu.addItem(withTitle: t("Export Cookies…", "导出 Cookies..."), action: #selector(exportCookiesMenu(_:)), keyEquivalent: "")
         exportCookiesItem.target = self
-        let clearWebsiteDataItem = fileMenu.addItem(withTitle: "焚烧当前空间...", action: #selector(burnCurrentProfileData(_:)), keyEquivalent: "")
+        let clearWebsiteDataItem = fileMenu.addItem(withTitle: t("Burn Current Profile…", "焚烧当前空间..."), action: #selector(burnCurrentProfileData(_:)), keyEquivalent: "")
         clearWebsiteDataItem.target = self
         fileMenu.addItem(NSMenuItem.separator())
-        let goToURLItem = fileMenu.addItem(withTitle: "前往网址...", action: #selector(goToURLAction(_:)), keyEquivalent: "l")
+        let goToURLItem = fileMenu.addItem(withTitle: t("Open Location…", "前往网址..."), action: #selector(goToURLAction(_:)), keyEquivalent: "l")
         goToURLItem.target = self
         fileMenu.addItem(NSMenuItem.separator())
-        let profilesItem = fileMenu.addItem(withTitle: "账号空间", action: nil, keyEquivalent: "")
-        let profilesSubmenu = NSMenu(title: "账号空间")
+        let profilesItem = fileMenu.addItem(withTitle: t("Profiles", "账号空间"), action: nil, keyEquivalent: "")
+        let profilesSubmenu = NSMenu(title: t("Profiles", "账号空间"))
         profilesSubmenu.delegate = self
         profilesSubmenu.autoenablesItems = false
         profilesItem.submenu = profilesSubmenu
         profilesMenu = profilesSubmenu
-        let incognitoItem = fileMenu.addItem(withTitle: "新建无痕窗口", action: #selector(openIncognitoWindow(_:)), keyEquivalent: "n")
+        let incognitoItem = fileMenu.addItem(withTitle: t("New Incognito Window", "新建无痕窗口"), action: #selector(openIncognitoWindow(_:)), keyEquivalent: "n")
         incognitoItem.keyEquivalentModifierMask = [.command, .shift]
         incognitoItem.target = self
         fileMenu.addItem(NSMenuItem.separator())
-        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenu.addItem(withTitle: t("Close Window", "关闭窗口"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        let editMenu = NSMenu(title: t("Edit", "编辑"))
+        editMenu.addItem(withTitle: t("Undo", "撤销"), action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: t("Redo", "重做"), action: Selector(("redo:")), keyEquivalent: "Z")
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: t("Cut", "剪切"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: t("Copy", "复制"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: t("Paste", "粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: t("Select All", "全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
         let viewItem = NSMenuItem()
-        let viewMenu = NSMenu(title: "视图")
-        let backItem = viewMenu.addItem(withTitle: "后退", action: #selector(goBackAction(_:)), keyEquivalent: "[")
+        let viewMenu = NSMenu(title: t("View", "视图"))
+        let backItem = viewMenu.addItem(withTitle: t("Back", "后退"), action: #selector(goBackAction(_:)), keyEquivalent: "[")
         backItem.target = self
-        let forwardItem = viewMenu.addItem(withTitle: "前进", action: #selector(goForwardAction(_:)), keyEquivalent: "]")
+        let forwardItem = viewMenu.addItem(withTitle: t("Forward", "前进"), action: #selector(goForwardAction(_:)), keyEquivalent: "]")
         forwardItem.target = self
-        let homeItem = viewMenu.addItem(withTitle: "回到首页", action: #selector(goHomeAction(_:)), keyEquivalent: "h")
+        let homeItem = viewMenu.addItem(withTitle: t("Home", "回到首页"), action: #selector(goHomeAction(_:)), keyEquivalent: "h")
         homeItem.keyEquivalentModifierMask = [.command, .shift]
         homeItem.target = self
         viewMenu.addItem(NSMenuItem.separator())
-        viewMenu.addItem(withTitle: "重新加载", action: #selector(BrowserWindowController.reload(_:)), keyEquivalent: "r")
+        viewMenu.addItem(withTitle: t("Reload", "重新加载"), action: #selector(BrowserWindowController.reload(_:)), keyEquivalent: "r")
         viewMenu.addItem(NSMenuItem.separator())
-        viewMenu.addItem(withTitle: "放大", action: #selector(BrowserWindowController.zoomIn(_:)), keyEquivalent: "=")
-        viewMenu.addItem(withTitle: "缩小", action: #selector(BrowserWindowController.zoomOut(_:)), keyEquivalent: "-")
-        viewMenu.addItem(withTitle: "实际大小", action: #selector(BrowserWindowController.resetZoom(_:)), keyEquivalent: "0")
+        viewMenu.addItem(withTitle: t("Zoom In", "放大"), action: #selector(BrowserWindowController.zoomIn(_:)), keyEquivalent: "=")
+        viewMenu.addItem(withTitle: t("Zoom Out", "缩小"), action: #selector(BrowserWindowController.zoomOut(_:)), keyEquivalent: "-")
+        viewMenu.addItem(withTitle: t("Actual Size", "实际大小"), action: #selector(BrowserWindowController.resetZoom(_:)), keyEquivalent: "0")
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
         let privacyItem = NSMenuItem()
-        let privacyMenu = NSMenu(title: "隐私")
-        let webRTCItem = privacyMenu.addItem(withTitle: "启用 WebRTC 防护", action: #selector(toggleWebRTCProtection(_:)), keyEquivalent: "")
+        let privacyMenu = NSMenu(title: t("Privacy", "隐私"))
+        let webRTCItem = privacyMenu.addItem(withTitle: t("Enable WebRTC Protection", "启用 WebRTC 防护"), action: #selector(toggleWebRTCProtection(_:)), keyEquivalent: "")
         webRTCItem.target = self
         webRTCProtectionItem = webRTCItem
         updateWebRTCProtectionMenuItem()
         privacyMenu.addItem(NSMenuItem.separator())
-        let privacyStatusItem = privacyMenu.addItem(withTitle: "隐私状态...", action: #selector(showPrivacyStatus(_:)), keyEquivalent: "")
+        let privacyStatusItem = privacyMenu.addItem(withTitle: t("Privacy Status…", "隐私状态..."), action: #selector(showPrivacyStatus(_:)), keyEquivalent: "")
         privacyStatusItem.target = self
-        let fingerprintTestItem = privacyMenu.addItem(withTitle: "打开指纹检测页", action: #selector(openFingerprintTestPage(_:)), keyEquivalent: "")
+        let fingerprintTestItem = privacyMenu.addItem(withTitle: t("Open Fingerprint Test Page", "打开指纹检测页"), action: #selector(openFingerprintTestPage(_:)), keyEquivalent: "")
         fingerprintTestItem.target = self
         privacyItem.submenu = privacyMenu
         mainMenu.addItem(privacyItem)
 
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "窗口")
-        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
+        let windowMenu = NSMenu(title: t("Window", "窗口"))
+        windowMenu.addItem(withTitle: t("Minimize", "最小化"), action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: t("Zoom", "缩放"), action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
         NSApp.windowsMenu = windowMenu
@@ -261,7 +276,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             let profileID = ProfileStore.currentProfileID()
             ProfileStore.setFingerprint(FingerprintCatalog.randomProfile(), for: profileID)
             self.rebuildMainController()
-            self.presentInfo("已焚烧当前空间浏览现场，并为当前空间重新随机化指纹。空间名称、首页和增强隐私设置已保留。")
+            self.presentInfo(t(
+                "Burned the current profile's browsing surface and re-randomized its fingerprint. The profile name, homepage, and enhanced-privacy setting were preserved.",
+                "已焚烧当前空间浏览现场，并为当前空间重新随机化指纹。空间名称、首页和增强隐私设置已保留。"
+            ))
         }
     }
 
@@ -277,9 +295,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     @objc private func showPrivacyStatus(_ sender: Any?) {
         let profile = ProfileStore.currentProfile()
         let fingerprint = ProfileStore.fingerprint(for: profile.id)
-        let fingerprintText = fingerprint?.displayName ?? "默认 Safari（不混淆）"
-        let enhancedPrivacyText = ProfileStore.isEnhancedPrivacyEnabled(for: profile.id) ? "开启" : "关闭"
-        let webRTCText = PrivacySettings.isWebRTCProtectionEnabled() ? "开启" : "关闭"
+        let fingerprintText = fingerprint?.displayName ?? t("Default Safari (no spoofing)", "默认 Safari（不混淆）")
+        let onOff: (Bool) -> String = { $0 ? t("On", "开启") : t("Off", "关闭") }
+        let enhancedPrivacyText = onOff(ProfileStore.isEnhancedPrivacyEnabled(for: profile.id))
+        let webRTCText = onOff(PrivacySettings.isWebRTCProtectionEnabled())
         let assessment = FingerprintCatalog.privacyAssessment(
             fingerprint: fingerprint,
             enhancedPrivacyEnabled: ProfileStore.isEnhancedPrivacyEnabled(for: profile.id),
@@ -287,30 +306,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         )
         let isolation: String
         if #available(macOS 14.0, *) {
-            isolation = profile.id == defaultProfileID ? "默认空间使用本 App 默认 WebView 数据仓库" : "当前空间使用独立 WKWebsiteDataStore"
+            isolation = profile.id == defaultProfileID
+                ? t("Default profile uses the app's default WebView data store", "默认空间使用本 App 默认 WebView 数据仓库")
+                : t("Current profile uses an isolated WKWebsiteDataStore", "当前空间使用独立 WKWebsiteDataStore")
         } else {
-            isolation = "当前系统不支持多账号持久数据仓库隔离"
+            isolation = t("Current macOS doesn't support per-profile persistent data store isolation", "当前系统不支持多账号持久数据仓库隔离")
         }
 
         let alert = NSAlert()
-        alert.messageText = "隐私状态"
-        alert.informativeText = """
-        当前空间：\(profile.name)
-        数据隔离：\(isolation)
-        指纹预设：\(fingerprintText)
-        增强隐私模式：\(enhancedPrivacyText)
-        WebRTC 防护：\(webRTCText)
-        GPC：JS 信号开启；主导航请求头 Sec-GPC 开启
-        URL 追踪参数清理：开启，仅处理顶层导航
-        Referrer 控制：开启，跨站顶层导航最多保留来源站点 origin
-        Accept-Language：JS 层覆盖；本 App 发起的顶层导航请求会带当前空间语言头，子资源仍由 WKWebView / 系统决定
-        Tracker blocking：未启用
+        alert.messageText = t("Privacy Status", "隐私状态")
+        let body: String
+        if preferredLanguageIsChinese {
+            body = """
+            当前空间：\(profile.name)
+            数据隔离：\(isolation)
+            指纹预设：\(fingerprintText)
+            增强隐私模式：\(enhancedPrivacyText)
+            WebRTC 防护：\(webRTCText)
+            GPC：JS 信号开启；主导航请求头 Sec-GPC 开启
+            URL 追踪参数清理：开启，仅处理顶层导航
+            Referrer 控制：开启，跨站顶层导航最多保留来源站点 origin
+            Accept-Language：JS 层覆盖；本 App 发起的顶层导航请求会带当前空间语言头，子资源仍由 WKWebView / 系统决定
+            Tracker blocking：未启用
 
-        一致性评估：
-        \(assessment)
-        """
+            一致性评估：
+            \(assessment)
+            """
+        } else {
+            body = """
+            Current profile: \(profile.name)
+            Data isolation: \(isolation)
+            Fingerprint preset: \(fingerprintText)
+            Enhanced privacy: \(enhancedPrivacyText)
+            WebRTC protection: \(webRTCText)
+            GPC: JS signal enabled; Sec-GPC header on top-level navigation enabled
+            URL tracking-param stripping: enabled, top-level navigations only
+            Referrer policy: enabled, cross-site top-level navigations keep only origin
+            Accept-Language: overridden at JS layer; app-initiated top-level navigations carry the profile language header; sub-resources still controlled by WKWebView / system
+            Tracker blocking: disabled
+
+            Consistency assessment:
+            \(assessment)
+            """
+        }
+        alert.informativeText = body
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: t("OK", "知道了"))
         alert.runModal()
     }
 
@@ -324,8 +365,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         let initial = controller.currentURL()?.absoluteString ?? ""
         promptForURL(
-            title: "前往网址",
-            message: "输入 https:// 开头的网址。该网址将在当前账号空间内加载，cookie 和登录态与其他空间相互隔离。",
+            title: t("Open Location", "前往网址"),
+            message: t(
+                "Enter a URL starting with https://. It will load inside the current profile; cookies and sign-in state stay isolated from other profiles.",
+                "输入 https:// 开头的网址。该网址将在当前账号空间内加载，cookie 和登录态与其他空间相互隔离。"
+            ),
             initial: initial
         ) { [weak self] url in
             guard let url else {
@@ -351,8 +395,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let profile = ProfileStore.currentProfile()
         let initial = UserDefaults.standard.string(forKey: profileHomepageDefaultsPrefix + profile.id) ?? ""
         promptForURL(
-            title: "设置空间 \"\(profile.name)\" 的首页",
-            message: "下次启动或切换到本空间时将自动加载该网址。仅支持 https://。留空可以保持当前设置。",
+            title: t("Set homepage for \"\(profile.name)\"", "设置空间 \"\(profile.name)\" 的首页"),
+            message: t(
+                "This URL will load when the app starts or you switch to this profile. https:// only. Leave blank to keep the current setting.",
+                "下次启动或切换到本空间时将自动加载该网址。仅支持 https://。留空可以保持当前设置。"
+            ),
             initial: initial
         ) { [weak self] url in
             guard let self, let url else {
@@ -372,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     @objc private func openIncognitoWindow(_ sender: Any?) {
         let controller = BrowserWindowController(
             initialURL: defaultHomepageURL,
-            title: "\(appDisplayName) · 无痕",
+            title: "\(appDisplayName) · \(t("Incognito", "无痕"))",
             isPopup: true,
             persistent: false,
             profileID: nil,
@@ -429,14 +476,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             return
         }
         let source = ProfileStore.currentProfile()
-        let defaultName = "\(source.name) 副本"
+        let defaultName = t("\(source.name) Copy", "\(source.name) 副本")
 
         let alert = NSAlert()
-        alert.messageText = "克隆当前空间"
-        alert.informativeText = "会复制首页和增强隐私设置，并自动为新空间生成稳定随机指纹。默认不复制 cookies，可按需勾选。"
+        alert.messageText = t("Clone Current Profile", "克隆当前空间")
+        alert.informativeText = t(
+            "Copies the homepage and enhanced-privacy setting, and generates a fresh stable random fingerprint for the new profile. Cookies are not copied by default — tick the box if you want them.",
+            "会复制首页和增强隐私设置，并自动为新空间生成稳定随机指纹。默认不复制 cookies，可按需勾选。"
+        )
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "克隆")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: t("Clone", "克隆"))
+        alert.addButton(withTitle: t("Cancel", "取消"))
 
         let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 320, height: 56))
         stack.orientation = .vertical
@@ -445,10 +495,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         textField.stringValue = uniqueProfileName(defaultName)
-        textField.placeholderString = "新空间名称"
+        textField.placeholderString = t("New profile name", "新空间名称")
         stack.addArrangedSubview(textField)
 
-        let copyCookiesButton = NSButton(checkboxWithTitle: "同时复制 cookies", target: nil, action: nil)
+        let copyCookiesButton = NSButton(checkboxWithTitle: t("Also copy cookies", "同时复制 cookies"), target: nil, action: nil)
         copyCookiesButton.state = .off
         stack.addArrangedSubview(copyCookiesButton)
 
@@ -475,7 +525,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let profile = ProfileStore.currentProfile()
         let panel = NSSavePanel()
         panel.title = "Export Profile"
-        panel.message = "导出当前空间配置：名称、首页、指纹预设和增强隐私设置。不会导出 cookies 或网站数据。"
+        panel.message = t(
+            "Export current profile config: name, homepage, fingerprint preset, and enhanced-privacy setting. Cookies and site data are not exported.",
+            "导出当前空间配置：名称、首页、指纹预设和增强隐私设置。不会导出 cookies 或网站数据。"
+        )
         panel.prompt = "Export"
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "\(profile.name)-profile.json"
@@ -494,7 +547,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         let panel = NSOpenPanel()
         panel.title = "Import Profile"
-        panel.message = "选择之前导出的 profile JSON。导入会创建一个新的账号空间，不会覆盖现有空间。"
+        panel.message = t(
+            "Pick a previously exported profile JSON. Import creates a new profile; it doesn't overwrite existing ones.",
+            "选择之前导出的 profile JSON。导入会创建一个新的账号空间，不会覆盖现有空间。"
+        )
         panel.prompt = "Import"
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
@@ -511,22 +567,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     @objc private func showFingerprintAbout(_ sender: Any?) {
         let alert = NSAlert()
-        alert.messageText = "指纹混淆能挡什么，不能挡什么"
-        alert.informativeText = """
-        能加强：每个空间固定一套 Safari/WebKit 家族指纹，覆盖 UA、navigator、screen、Intl、触控、Canvas、WebGL、AudioContext、GPC、WebRTC 暴露面等常见 JS 层信号。
+        alert.messageText = t(
+            "What fingerprint spoofing can and can't block",
+            "指纹混淆能挡什么，不能挡什么"
+        )
+        let aboutBody: String
+        if preferredLanguageIsChinese {
+            aboutBody = """
+            能加强：每个空间固定一套 Safari/WebKit 家族指纹，覆盖 UA、navigator、screen、Intl、触控、Canvas、WebGL、AudioContext、GPC、WebRTC 暴露面等常见 JS 层信号。
 
-        推荐做法：保持每个空间长期使用同一套指纹，只在「焚烧当前空间」后重新随机化。不要频繁切换成完全不同设备。
+            推荐做法：保持每个空间长期使用同一套指纹，只在「焚烧当前空间」后重新随机化。不要频繁切换成完全不同设备。
 
-        挡不住：
-        - TLS 指纹（JA3 / JA4）：WKWebView 使用系统网络栈，App 无法逐站点修改。
-        - HTTP/2 帧顺序和 WebKit 渲染细节：仍会暴露 Safari/WebKit 引擎特征。
-        - Worker、字体、GPU、窗口尺寸、行为模式等强风控信号：只能降低暴露，不能保证隐藏。
-        - IP 地址：同一出口 IP 仍可能把不同账号关联到同一网络环境。
+            挡不住：
+            - TLS 指纹（JA3 / JA4）：WKWebView 使用系统网络栈，App 无法逐站点修改。
+            - HTTP/2 帧顺序和 WebKit 渲染细节：仍会暴露 Safari/WebKit 引擎特征。
+            - Worker、字体、GPU、窗口尺寸、行为模式等强风控信号：只能降低暴露，不能保证隐藏。
+            - IP 地址：同一出口 IP 仍可能把不同账号关联到同一网络环境。
 
-        所以本 App 只做「Safari-only 一致性隐私指纹」，不做 Chrome / Firefox 跨引擎伪装。
-        """
+            所以本 App 只做「Safari-only 一致性隐私指纹」，不做 Chrome / Firefox 跨引擎伪装。
+            """
+        } else {
+            aboutBody = """
+            What it strengthens: each profile gets a fixed Safari/WebKit-family fingerprint covering common JS-layer signals — UA, navigator, screen, Intl, touch, Canvas, WebGL, AudioContext, GPC, WebRTC exposure surface.
+
+            Recommended use: keep the same fingerprint on a given profile long-term, and only re-randomize after "Burn Current Profile". Don't constantly hop between wildly different devices.
+
+            Can't block:
+            - TLS fingerprint (JA3 / JA4): WKWebView uses the system network stack; the app can't rewrite it per site.
+            - HTTP/2 frame order and WebKit rendering details: still expose Safari/WebKit engine traits.
+            - Worker, fonts, GPU, window size, behavior patterns: exposure can be reduced, not hidden.
+            - IP address: a shared egress IP can still tie multiple accounts to the same network.
+
+            That's why this app only does "Safari-only consistent privacy fingerprinting" — no Chrome / Firefox cross-engine masquerade.
+            """
+        }
+        alert.informativeText = aboutBody
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: t("OK", "知道了"))
         alert.runModal()
     }
 
@@ -534,7 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         guard ensureIsolationAvailable() else {
             return
         }
-        promptForName(title: "新建账号空间", initial: "") { [weak self] name in
+        promptForName(title: t("New Profile", "新建账号空间"), initial: "") { [weak self] name in
             guard let self, let name else {
                 return
             }
@@ -560,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         guard let idx = profiles.firstIndex(where: { $0.id == currentID }) else {
             return
         }
-        promptForName(title: "重命名当前空间", initial: profiles[idx].name) { [weak self] name in
+        promptForName(title: t("Rename Current Profile", "重命名当前空间"), initial: profiles[idx].name) { [weak self] name in
             guard let self, let name else {
                 return
             }
@@ -583,10 +660,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     private func presentDuplicateNameAlert(name: String) {
         let alert = NSAlert()
-        alert.messageText = "已存在同名账号空间"
-        alert.informativeText = "已经有一个名为「\(name)」的账号空间。请换一个名字。"
+        alert.messageText = t("Profile name already exists", "已存在同名账号空间")
+        alert.informativeText = t(
+            "A profile named \"\(name)\" already exists. Pick a different name.",
+            "已经有一个名为「\(name)」的账号空间。请换一个名字。"
+        )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: t("OK", "知道了"))
         alert.runModal()
     }
 
@@ -601,11 +681,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         let profile = profiles[idx]
         let alert = NSAlert()
-        alert.messageText = "删除账号空间 \"\(profile.name)\"？"
-        alert.informativeText = "本空间的所有 cookie、登录态、缓存与本地存储将被永久删除。其他空间不受影响。"
+        alert.messageText = t("Delete profile \"\(profile.name)\"?", "删除账号空间 \"\(profile.name)\"？")
+        alert.informativeText = t(
+            "All cookies, sign-in state, cache, and local storage for this profile will be permanently deleted. Other profiles are unaffected.",
+            "本空间的所有 cookie、登录态、缓存与本地存储将被永久删除。其他空间不受影响。"
+        )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: t("Delete", "删除"))
+        alert.addButton(withTitle: t("Cancel", "取消"))
         guard alert.runModal() == .alertFirstButtonReturn else {
             return
         }
@@ -659,44 +742,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             item.isEnabled = isolationAvailable || profile.id == defaultProfileID
         }
         menu.addItem(NSMenuItem.separator())
-        let fingerprintItem = menu.addItem(withTitle: "指纹预设", action: nil, keyEquivalent: "")
-        let fingerprintMenu = NSMenu(title: "指纹预设")
+        let fingerprintItem = menu.addItem(withTitle: t("Fingerprint Preset", "指纹预设"), action: nil, keyEquivalent: "")
+        let fingerprintMenu = NSMenu(title: t("Fingerprint Preset", "指纹预设"))
         rebuildFingerprintMenu(fingerprintMenu, profileID: currentID)
         fingerprintItem.submenu = fingerprintMenu
-        let enhancedItem = menu.addItem(withTitle: "增强隐私模式（当前空间）", action: #selector(toggleEnhancedPrivacy(_:)), keyEquivalent: "")
+        let enhancedItem = menu.addItem(withTitle: t("Enhanced Privacy Mode (current profile)", "增强隐私模式（当前空间）"), action: #selector(toggleEnhancedPrivacy(_:)), keyEquivalent: "")
         enhancedItem.target = self
         enhancedItem.state = ProfileStore.isEnhancedPrivacyEnabled(for: currentID) ? .on : .off
-        let testItem = menu.addItem(withTitle: "打开指纹检测页", action: #selector(openFingerprintTestPage(_:)), keyEquivalent: "")
+        let testItem = menu.addItem(withTitle: t("Open Fingerprint Test Page", "打开指纹检测页"), action: #selector(openFingerprintTestPage(_:)), keyEquivalent: "")
         testItem.target = self
         menu.addItem(NSMenuItem.separator())
-        let setHomeItem = menu.addItem(withTitle: "设置当前空间首页…", action: #selector(setProfileHomepageAction(_:)), keyEquivalent: "")
+        let setHomeItem = menu.addItem(withTitle: t("Set Homepage for Current Profile…", "设置当前空间首页…"), action: #selector(setProfileHomepageAction(_:)), keyEquivalent: "")
         setHomeItem.target = self
-        let resetHomeItem = menu.addItem(withTitle: "恢复默认首页并打开", action: #selector(resetProfileHomepageAction(_:)), keyEquivalent: "")
+        let resetHomeItem = menu.addItem(withTitle: t("Reset Homepage and Open", "恢复默认首页并打开"), action: #selector(resetProfileHomepageAction(_:)), keyEquivalent: "")
         resetHomeItem.target = self
         let hasHomepage = UserDefaults.standard.string(forKey: profileHomepageDefaultsPrefix + currentID) != nil
         resetHomeItem.isEnabled = hasHomepage
         menu.addItem(NSMenuItem.separator())
-        let addItem = menu.addItem(withTitle: "新建账号空间…", action: #selector(addProfileAction(_:)), keyEquivalent: "")
+        let addItem = menu.addItem(withTitle: t("New Profile…", "新建账号空间…"), action: #selector(addProfileAction(_:)), keyEquivalent: "")
         addItem.target = self
         addItem.isEnabled = isolationAvailable
-        let cloneItem = menu.addItem(withTitle: "克隆当前空间…", action: #selector(cloneCurrentProfileAction(_:)), keyEquivalent: "")
+        let cloneItem = menu.addItem(withTitle: t("Clone Current Profile…", "克隆当前空间…"), action: #selector(cloneCurrentProfileAction(_:)), keyEquivalent: "")
         cloneItem.target = self
         cloneItem.isEnabled = isolationAvailable
-        let exportItem = menu.addItem(withTitle: "导出当前空间配置…", action: #selector(exportCurrentProfileAction(_:)), keyEquivalent: "")
+        let exportItem = menu.addItem(withTitle: t("Export Current Profile…", "导出当前空间配置…"), action: #selector(exportCurrentProfileAction(_:)), keyEquivalent: "")
         exportItem.target = self
-        let importItem = menu.addItem(withTitle: "导入空间配置…", action: #selector(importProfileAction(_:)), keyEquivalent: "")
+        let importItem = menu.addItem(withTitle: t("Import Profile…", "导入空间配置…"), action: #selector(importProfileAction(_:)), keyEquivalent: "")
         importItem.target = self
         importItem.isEnabled = isolationAvailable
-        let renameItem = menu.addItem(withTitle: "重命名当前空间…", action: #selector(renameCurrentProfileAction(_:)), keyEquivalent: "")
+        let renameItem = menu.addItem(withTitle: t("Rename Current Profile…", "重命名当前空间…"), action: #selector(renameCurrentProfileAction(_:)), keyEquivalent: "")
         renameItem.target = self
         renameItem.isEnabled = isolationAvailable && currentID != defaultProfileID
-        let deleteItem = menu.addItem(withTitle: "删除当前空间…", action: #selector(deleteCurrentProfileAction(_:)), keyEquivalent: "")
+        let deleteItem = menu.addItem(withTitle: t("Delete Current Profile…", "删除当前空间…"), action: #selector(deleteCurrentProfileAction(_:)), keyEquivalent: "")
         deleteItem.target = self
         deleteItem.isEnabled = isolationAvailable && currentID != defaultProfileID
 
         if !isolationAvailable {
             menu.addItem(NSMenuItem.separator())
-            let hint = menu.addItem(withTitle: "账号空间隔离需要 macOS 14 或更新版本", action: nil, keyEquivalent: "")
+            let hint = menu.addItem(withTitle: t("Profile isolation requires macOS 14 or later", "账号空间隔离需要 macOS 14 或更新版本"), action: nil, keyEquivalent: "")
             hint.isEnabled = false
         }
     }
@@ -706,9 +789,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let currentFingerprint = ProfileStore.fingerprint(for: profileID)
         let currentPresetID = currentFingerprint?.presetID ?? FingerprintCatalog.offPresetID
 
+        let offLabel = t("Default Safari (no spoofing)", "默认 Safari（不混淆）")
         let offTitle = currentPresetID == FingerprintCatalog.offPresetID
-            ? "● 默认 Safari（不混淆）"
-            : "  默认 Safari（不混淆）"
+            ? "● \(offLabel)"
+            : "  \(offLabel)"
         let offItem = menu.addItem(withTitle: offTitle, action: #selector(selectFingerprintPreset(_:)), keyEquivalent: "")
         offItem.target = self
         offItem.representedObject = FingerprintCatalog.offPresetID
@@ -727,10 +811,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
 
         menu.addItem(NSMenuItem.separator())
-        let randomizeItem = menu.addItem(withTitle: "重新随机化（当前空间）", action: #selector(randomizeCurrentFingerprint(_:)), keyEquivalent: "")
+        let randomizeItem = menu.addItem(withTitle: t("Re-randomize (current profile)", "重新随机化（当前空间）"), action: #selector(randomizeCurrentFingerprint(_:)), keyEquivalent: "")
         randomizeItem.target = self
         menu.addItem(NSMenuItem.separator())
-        let aboutItem = menu.addItem(withTitle: "关于指纹混淆…", action: #selector(showFingerprintAbout(_:)), keyEquivalent: "")
+        let aboutItem = menu.addItem(withTitle: t("About Fingerprint Spoofing…", "关于指纹混淆…"), action: #selector(showFingerprintAbout(_:)), keyEquivalent: "")
         aboutItem.target = self
     }
 
@@ -761,16 +845,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             return true
         }
         let alert = NSAlert()
-        alert.messageText = "无法新建账号空间"
-        alert.informativeText = "多账号隔离需要 macOS 14 或更新版本。当前系统版本只支持默认空间和无痕窗口。"
+        alert.messageText = t("Can't create new profile", "无法新建账号空间")
+        alert.informativeText = t(
+            "Multi-profile isolation requires macOS 14 or later. The current macOS version only supports the default profile and incognito windows.",
+            "多账号隔离需要 macOS 14 或更新版本。当前系统版本只支持默认空间和无痕窗口。"
+        )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: t("OK", "知道了"))
         alert.runModal()
         return false
     }
 
     private func updateWebRTCProtectionMenuItem() {
-        webRTCProtectionItem?.title = "启用 WebRTC 防护"
+        webRTCProtectionItem?.title = t("Enable WebRTC Protection", "启用 WebRTC 防护")
         webRTCProtectionItem?.state = PrivacySettings.isWebRTCProtectionEnabled() ? .on : .off
     }
 
@@ -801,7 +888,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
         controller.copyCookies(toProfileID: newProfile.id) { [weak self] count in
             switchToNewProfile()
-            self?.presentInfo("已克隆空间「\(name)」，并复制 \(count) 个 cookie。")
+            self?.presentInfo(t(
+                "Cloned profile \"\(name)\" and copied \(count) cookie(s).",
+                "已克隆空间「\(name)」，并复制 \(count) 个 cookie。"
+            ))
         }
     }
 
@@ -823,9 +913,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(document)
             try data.write(to: url, options: .atomic)
-            presentInfo("已导出当前空间配置到 \(url.lastPathComponent)。")
+            presentInfo(t(
+                "Exported current profile config to \(url.lastPathComponent).",
+                "已导出当前空间配置到 \(url.lastPathComponent)。"
+            ))
         } catch {
-            presentError("Profile 导出失败：\(error.localizedDescription)")
+            presentError(t(
+                "Profile export failed: \(error.localizedDescription)",
+                "Profile 导出失败：\(error.localizedDescription)"
+            ))
         }
     }
 
@@ -836,11 +932,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             decoder.dateDecodingStrategy = .iso8601
             let document = try decoder.decode(ProfileExportDocument.self, from: data)
             guard document.schemaVersion == 1 else {
-                presentError("Profile JSON 版本不支持。")
+                presentError(t("Profile JSON version not supported.", "Profile JSON 版本不支持。"))
                 return
             }
 
-            let name = uniqueProfileName(document.name.isEmpty ? "导入空间" : document.name)
+            let name = uniqueProfileName(document.name.isEmpty ? t("Imported Profile", "导入空间") : document.name)
             let profile = WebProfile(id: UUID().uuidString, name: name, createdAt: Date())
             var profiles = ProfileStore.loadProfiles()
             profiles.append(profile)
@@ -856,15 +952,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             ProfileStore.setCurrentProfileID(profile.id)
             updateWebRTCProtectionMenuItem()
             rebuildMainController()
-            presentInfo("已导入空间配置「\(name)」。")
+            presentInfo(t(
+                "Imported profile \"\(name)\".",
+                "已导入空间配置「\(name)」。"
+            ))
         } catch {
-            presentError("Profile 导入失败：\(error.localizedDescription)")
+            presentError(t(
+                "Profile import failed: \(error.localizedDescription)",
+                "Profile 导入失败：\(error.localizedDescription)"
+            ))
         }
     }
 
     private func uniqueProfileName(_ baseName: String) -> String {
         let trimmed = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = trimmed.isEmpty ? "新空间" : trimmed
+        let base = trimmed.isEmpty ? t("New Profile", "新空间") : trimmed
         let profiles = ProfileStore.loadProfiles()
         if !Self.profileNameExists(base, in: profiles, excluding: nil) {
             return base
@@ -893,7 +995,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         alert.messageText = appDisplayName
         alert.informativeText = text
         alert.alertStyle = style
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: t("OK", "知道了"))
         alert.runModal()
     }
 
@@ -902,8 +1004,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "前往")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: t("Go", "前往"))
+        alert.addButton(withTitle: t("Cancel", "取消"))
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         textField.stringValue = initial
         textField.placeholderString = "https://example.com"
@@ -918,10 +1020,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         guard let url = Self.validatedExternalURL(trimmed) else {
             let warn = NSAlert()
-            warn.messageText = "网址无效"
-            warn.informativeText = "请输入完整的 https:// 网址，例如 https://example.com。仅支持 https，明文 http 已拒绝。"
+            warn.messageText = t("Invalid URL", "网址无效")
+            warn.informativeText = t(
+                "Enter a full https:// URL, e.g. https://example.com. Only https is supported; plain http is rejected.",
+                "请输入完整的 https:// 网址，例如 https://example.com。仅支持 https，明文 http 已拒绝。"
+            )
             warn.alertStyle = .warning
-            warn.addButton(withTitle: "知道了")
+            warn.addButton(withTitle: t("OK", "知道了"))
             warn.runModal()
             completion(nil)
             return
@@ -959,11 +1064,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let alert = NSAlert()
         alert.messageText = title
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "确定")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: t("OK", "确定"))
+        alert.addButton(withTitle: t("Cancel", "取消"))
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         textField.stringValue = initial
-        textField.placeholderString = "例如：工作号 / 私人号"
+        textField.placeholderString = t("e.g. Work / Personal", "例如：工作号 / 私人号")
         alert.accessoryView = textField
         alert.window.initialFirstResponder = textField
 
@@ -1121,7 +1226,10 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     func importCookiesFromPanel() {
         let panel = NSOpenPanel()
         panel.title = "Import Cookies"
-        panel.message = "选择从浏览器导出的 cookie JSON 文件。将导入到当前账号空间。"
+        panel.message = t(
+            "Pick a cookie JSON file exported from a browser. It will be imported into the current profile.",
+            "选择从浏览器导出的 cookie JSON 文件。将导入到当前账号空间。"
+        )
         panel.prompt = "Import"
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
@@ -1140,7 +1248,10 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     func exportCookiesViaPanel() {
         let panel = NSSavePanel()
         panel.title = "Export Cookies"
-        panel.message = "导出当前账号空间内所有 cookie 到 JSON 文件。"
+        panel.message = t(
+            "Export all cookies in the current profile to a JSON file.",
+            "导出当前账号空间内所有 cookie 到 JSON 文件。"
+        )
         panel.prompt = "Export"
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = Self.suggestedExportFilename()
@@ -1162,7 +1273,10 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             }
 
             guard !cookies.isEmpty else {
-                self.presentError("当前账号空间内没有可导出的 cookie。")
+                self.presentError(t(
+                    "No cookies to export in the current profile.",
+                    "当前账号空间内没有可导出的 cookie。"
+                ))
                 return
             }
 
@@ -1172,9 +1286,15 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 let data = try encoder.encode(exported)
                 try data.write(to: url, options: [.atomic])
-                self.presentInfo("已导出 \(cookies.count) 个 cookie 到 \(url.lastPathComponent)。")
+                self.presentInfo(t(
+                    "Exported \(cookies.count) cookie(s) to \(url.lastPathComponent).",
+                    "已导出 \(cookies.count) 个 cookie 到 \(url.lastPathComponent)。"
+                ))
             } catch {
-                self.presentError("Cookie 导出失败：\(error.localizedDescription)")
+                self.presentError(t(
+                    "Cookie export failed: \(error.localizedDescription)",
+                    "Cookie 导出失败：\(error.localizedDescription)"
+                ))
             }
         }
     }
@@ -1188,11 +1308,14 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
 
     func confirmBurnCurrentProfileData(completion: @escaping () -> Void) {
         let alert = NSAlert()
-        alert.messageText = "焚烧当前空间？"
-        alert.informativeText = "这会删除当前空间在本 App WebView 内所有站点的 cookies、缓存、localStorage、IndexedDB、Service Worker 等网站数据，关闭当前空间弹窗，清空页面历史，重建浏览器视图，并重新随机化当前空间指纹。\n\n会保留：空间名称、首页、增强隐私设置。其他空间不受影响。"
+        alert.messageText = t("Burn current profile?", "焚烧当前空间？")
+        alert.informativeText = t(
+            "This deletes all site data — cookies, cache, localStorage, IndexedDB, Service Workers — for every site this profile has visited in the app, closes the current profile popups, clears page history, rebuilds the browser view, and re-randomizes the current profile fingerprint.\n\nKept: profile name, homepage, enhanced-privacy setting. Other profiles are unaffected.",
+            "这会删除当前空间在本 App WebView 内所有站点的 cookies、缓存、localStorage、IndexedDB、Service Worker 等网站数据，关闭当前空间弹窗，清空页面历史，重建浏览器视图，并重新随机化当前空间指纹。\n\n会保留：空间名称、首页、增强隐私设置。其他空间不受影响。"
+        )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "焚烧并重建")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: t("Burn and Rebuild", "焚烧并重建"))
+        alert.addButton(withTitle: t("Cancel", "取消"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else {
                 return
@@ -1301,7 +1424,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        let host = navigationAction.request.url?.host ?? "网页"
+        let host = navigationAction.request.url?.host ?? t("Web Page", "网页")
         let child = BrowserWindowController(
             initialURL: nil,
             title: makePopupTitle(host: host),
@@ -1345,7 +1468,10 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
 
     @available(macOS 11.3, *)
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        presentError("下载失败：\(error.localizedDescription)")
+        presentError(t(
+            "Download failed: \(error.localizedDescription)",
+            "下载失败：\(error.localizedDescription)"
+        ))
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -1363,7 +1489,10 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             try data.write(to: outputURL, options: .atomic)
             NSWorkspace.shared.activateFileViewerSelecting([outputURL])
         } catch {
-            presentError("保存下载失败：\(error.localizedDescription)")
+            presentError(t(
+                "Failed to save download: \(error.localizedDescription)",
+                "保存下载失败：\(error.localizedDescription)"
+            ))
         }
     }
 
@@ -1389,7 +1518,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     private func openPopup(url: URL) {
-        let host = url.host ?? "网页"
+        let host = url.host ?? t("Web Page", "网页")
         let child = BrowserWindowController(
             initialURL: url,
             title: makePopupTitle(host: host),
@@ -1412,7 +1541,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
 
     private func makePopupTitle(host: String) -> String {
         if !persistent {
-            return "\(host) · 无痕"
+            return "\(host) · \(t("Incognito", "无痕"))"
         }
         if let name = profileDisplayName() {
             return "\(host) · \(name)"
@@ -1450,11 +1579,17 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             }
 
             group.notify(queue: .main) { [weak self] in
-                self?.presentInfo("已导入 \(cookies.count) 个 cookie，正在刷新页面。")
+                self?.presentInfo(t(
+                    "Imported \(cookies.count) cookie(s). Refreshing page.",
+                    "已导入 \(cookies.count) 个 cookie，正在刷新页面。"
+                ))
                 self?.webView.reload()
             }
         } catch {
-            presentError("Cookie 导入失败：\(Self.safeCookieImportMessage(error))")
+            presentError(t(
+                "Cookie import failed: \(Self.safeCookieImportMessage(error))",
+                "Cookie 导入失败：\(Self.safeCookieImportMessage(error))"
+            ))
         }
     }
 
@@ -1507,14 +1642,14 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     private static func loadCookieExport(from url: URL) throws -> [HTTPCookie] {
         let values = try url.resourceValues(forKeys: [.fileSizeKey])
         if let fileSize = values.fileSize, fileSize > maximumCookieImportBytes {
-            throw cookieImportError("JSON 文件过大")
+            throw cookieImportError(t("JSON file is too large", "JSON 文件过大"))
         }
 
         let data = try Data(contentsOf: url)
         let exportedCookies = try JSONDecoder().decode([ExportedBrowserCookie].self, from: data)
         let cookies = try exportedCookies.map { try $0.makeCookie() }
         guard !cookies.isEmpty else {
-            throw cookieImportError("没有可导入的 cookie")
+            throw cookieImportError(t("No cookies to import", "没有可导入的 cookie"))
         }
         return cookies
     }
@@ -1523,13 +1658,13 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         if let decodingError = error as? DecodingError {
             switch decodingError {
             case .dataCorrupted:
-                return "JSON 内容无效"
+                return t("Invalid JSON content", "JSON 内容无效")
             case .keyNotFound:
-                return "JSON 缺少必要字段"
+                return t("Missing required JSON field", "JSON 缺少必要字段")
             case .typeMismatch, .valueNotFound:
-                return "JSON 字段类型不匹配"
+                return t("JSON field type mismatch", "JSON 字段类型不匹配")
             @unknown default:
-                return "JSON 解析失败"
+                return t("JSON parse failed", "JSON 解析失败")
             }
         }
 
@@ -1547,14 +1682,14 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
 
     private func decodeDataURL(_ dataURL: String) throws -> Data {
         guard let commaIndex = dataURL.firstIndex(of: ",") else {
-            throw NSError(domain: "FingerprintBrowser", code: 1, userInfo: [NSLocalizedDescriptionKey: "不是有效的 data URL"])
+            throw NSError(domain: "FingerprintBrowser", code: 1, userInfo: [NSLocalizedDescriptionKey: t("Not a valid data URL", "不是有效的 data URL")])
         }
 
         let header = dataURL[..<commaIndex]
         let body = String(dataURL[dataURL.index(after: commaIndex)...])
         if header.contains(";base64") {
             guard let data = Data(base64Encoded: body, options: [.ignoreUnknownCharacters]) else {
-                throw NSError(domain: "FingerprintBrowser", code: 2, userInfo: [NSLocalizedDescriptionKey: "Base64 数据无法解码"])
+                throw NSError(domain: "FingerprintBrowser", code: 2, userInfo: [NSLocalizedDescriptionKey: t("Base64 data could not be decoded", "Base64 数据无法解码")])
             }
             return data
         }
@@ -1562,7 +1697,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         guard let decoded = body.removingPercentEncoding,
               let data = decoded.data(using: .utf8)
         else {
-            throw NSError(domain: "FingerprintBrowser", code: 3, userInfo: [NSLocalizedDescriptionKey: "文本数据无法解码"])
+            throw NSError(domain: "FingerprintBrowser", code: 3, userInfo: [NSLocalizedDescriptionKey: t("Text data could not be decoded", "文本数据无法解码")])
         }
         return data
     }
@@ -1837,13 +1972,22 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         return clamped.integral
     }
 
-    private static let fingerprintTestHTML = """
+    private static var fingerprintTestHTML: String {
+        let isZh = preferredLanguageIsChinese
+        let lang = isZh ? "zh-CN" : "en"
+        let title = isZh ? "指纹检测页" : "Fingerprint Test"
+        let heading = title
+        let intro = isZh
+            ? "这个页面在当前账号空间内运行，用来检查 UA、navigator、screen、WebRTC、Canvas、WebGL 和 AudioContext 暴露值。切换指纹预设或增强隐私模式后重新打开即可对比。"
+            : "This page runs inside the current profile to inspect UA, navigator, screen, WebRTC, Canvas, WebGL, and AudioContext values. Re-open it after switching fingerprint preset or enhanced privacy to compare."
+        let canvasText = isZh ? "指纹检测 123" : "Fingerprint 123"
+        return """
     <!doctype html>
-    <html lang="zh-CN">
+    <html lang="\(lang)">
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>指纹检测页</title>
+      <title>\(title)</title>
       <style>
         :root { color-scheme: light dark; }
         body {
@@ -1881,8 +2025,8 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     </head>
     <body>
       <main>
-        <h1>指纹检测页</h1>
-        <p>这个页面在当前账号空间内运行，用来检查 UA、navigator、screen、WebRTC、Canvas、WebGL 和 AudioContext 暴露值。切换指纹预设或增强隐私模式后重新打开即可对比。</p>
+        <h1>\(heading)</h1>
+        <p>\(intro)</p>
         <table>
           <tbody id="report"></tbody>
         </table>
@@ -1916,7 +2060,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             ctx.fillStyle = '#123456';
             ctx.font = '18px -apple-system, Arial';
-            ctx.fillText('指纹检测 123', 12, 32);
+            ctx.fillText('\(canvasText)', 12, 32);
             ctx.strokeStyle = '#c2410c';
             ctx.beginPath();
             ctx.arc(180, 42, 22, 0, Math.PI * 2);
@@ -2027,6 +2171,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     </body>
     </html>
     """
+    }
 
     private static let downloadBridgeScript = """
     (() => {
@@ -2145,13 +2290,13 @@ private struct ExportedBrowserCookie: Codable {
         let cookiePath = path.isEmpty ? "/" : path
 
         guard !trimmedName.isEmpty else {
-            throw BrowserWindowController.cookieImportError("cookie 名称为空")
+            throw BrowserWindowController.cookieImportError(t("Cookie name is empty", "cookie 名称为空"))
         }
         guard !trimmedDomain.isEmpty else {
-            throw BrowserWindowController.cookieImportError("cookie 域名为空")
+            throw BrowserWindowController.cookieImportError(t("Cookie domain is empty", "cookie 域名为空"))
         }
         guard cookiePath.hasPrefix("/") else {
-            throw BrowserWindowController.cookieImportError("cookie path 无效")
+            throw BrowserWindowController.cookieImportError(t("Cookie path is invalid", "cookie path 无效"))
         }
 
         var properties: [HTTPCookiePropertyKey: Any] = [
@@ -2176,7 +2321,7 @@ private struct ExportedBrowserCookie: Codable {
         }
 
         guard let cookie = HTTPCookie(properties: properties) else {
-            throw BrowserWindowController.cookieImportError("cookie 数据无法转换")
+            throw BrowserWindowController.cookieImportError(t("Cookie data could not be converted", "cookie 数据无法转换"))
         }
 
         return cookie
@@ -2329,19 +2474,37 @@ private enum FingerprintCatalog {
     ) -> String {
         var lines: [String] = []
         if let fingerprint {
-            lines.append("推荐基线：开启，当前空间固定为 \(fingerprint.displayName)")
+            lines.append(t(
+                "Recommended baseline: on. Current profile pinned to \(fingerprint.displayName)",
+                "推荐基线：开启，当前空间固定为 \(fingerprint.displayName)"
+            ))
             let issues = consistencyIssues(for: fingerprint)
             if issues.isEmpty {
-                lines.append("Safari 一致性：通过基础检查")
+                lines.append(t("Safari consistency: basic checks passed", "Safari 一致性：通过基础检查"))
             } else {
-                lines.append("Safari 一致性：需注意 " + issues.joined(separator: "；"))
+                lines.append(t(
+                    "Safari consistency: watch out — " + issues.joined(separator: "; "),
+                    "Safari 一致性：需注意 " + issues.joined(separator: "；")
+                ))
             }
         } else {
-            lines.append("推荐基线：关闭，当前空间使用真实默认 Safari/WebKit 指纹")
+            lines.append(t(
+                "Recommended baseline: off. Current profile uses the real default Safari/WebKit fingerprint",
+                "推荐基线：关闭，当前空间使用真实默认 Safari/WebKit 指纹"
+            ))
         }
-        lines.append("增强隐私：\(enhancedPrivacyEnabled ? "开启，Canvas/WebGL/Audio 等使用稳定扰动" : "关闭，JS 层高熵指纹暴露更多")")
-        lines.append("WebRTC：\(webRTCProtectionEnabled ? "已屏蔽构造器和设备枚举" : "关闭，可能暴露本机网络和设备枚举")")
-        lines.append("不可控残余：TLS/HTTP2/Worker/字体/GPU/IP/行为模式仍不能保证伪装成另一台真实设备")
+        lines.append(t(
+            "Enhanced privacy: \(enhancedPrivacyEnabled ? "on — Canvas/WebGL/Audio use stable noise" : "off — high-entropy JS-layer fingerprints exposed")",
+            "增强隐私：\(enhancedPrivacyEnabled ? "开启，Canvas/WebGL/Audio 等使用稳定扰动" : "关闭，JS 层高熵指纹暴露更多")"
+        ))
+        lines.append(t(
+            "WebRTC: \(webRTCProtectionEnabled ? "constructors and device enumeration blocked" : "off — local network and device enumeration may be exposed")",
+            "WebRTC：\(webRTCProtectionEnabled ? "已屏蔽构造器和设备枚举" : "关闭，可能暴露本机网络和设备枚举")"
+        ))
+        lines.append(t(
+            "Uncontrollable residue: TLS/HTTP2/Worker/fonts/GPU/IP/behavior patterns can still expose this device",
+            "不可控残余：TLS/HTTP2/Worker/字体/GPU/IP/行为模式仍不能保证伪装成另一台真实设备"
+        ))
         return lines.joined(separator: "\n")
     }
 
@@ -2354,25 +2517,25 @@ private enum FingerprintCatalog {
             && !ua.contains("Firefox")
             && !ua.contains("Edg")
         if !isSafariFamily {
-            issues.append("UA 不是 Safari/WebKit 家族")
+            issues.append(t("UA isn't in the Safari/WebKit family", "UA 不是 Safari/WebKit 家族"))
         }
         if ua.contains("Macintosh") && fingerprint.platform != "MacIntel" {
-            issues.append("Mac UA 与 platform 不一致")
+            issues.append(t("Mac UA doesn't match platform", "Mac UA 与 platform 不一致"))
         }
         if ua.contains("iPhone") && (fingerprint.platform != "iPhone" || fingerprint.maxTouchPoints == 0) {
-            issues.append("iPhone UA 与触控/platform 不一致")
+            issues.append(t("iPhone UA doesn't match touch/platform", "iPhone UA 与触控/platform 不一致"))
         }
         if ua.contains("iPad") && fingerprint.maxTouchPoints == 0 {
-            issues.append("iPad UA 缺少触控能力")
+            issues.append(t("iPad UA missing touch capability", "iPad UA 缺少触控能力"))
         }
         if fingerprint.maxTouchPoints == 0 && (fingerprint.platform == "iPhone" || fingerprint.platform == "iPad") {
-            issues.append("移动 platform 缺少触控能力")
+            issues.append(t("Mobile platform missing touch capability", "移动 platform 缺少触控能力"))
         }
         if fingerprint.devicePixelRatio < 1.0 || fingerprint.devicePixelRatio > 3.0 {
-            issues.append("DPR 超出常见 Safari 设备范围")
+            issues.append(t("DPR outside common Safari device range", "DPR 超出常见 Safari 设备范围"))
         }
         if fingerprint.screenWidth < 320 || fingerprint.screenHeight < 480 {
-            issues.append("屏幕尺寸过小")
+            issues.append(t("Screen size too small", "屏幕尺寸过小"))
         }
         return issues
     }
@@ -2759,7 +2922,7 @@ private enum FingerprintCatalog {
 
         return FingerprintProfile(
             presetID: "random-\(UUID().uuidString)",
-            displayName: "随机：Mac Safari 稳定指纹",
+            displayName: t("Random: Mac Safari stable fingerprint", "随机：Mac Safari 稳定指纹"),
             userAgent: macSafari17UserAgent,
             acceptLanguages: defaultAcceptLanguages,
             platform: "MacIntel",
@@ -2785,7 +2948,7 @@ private enum FingerprintCatalog {
 
         return FingerprintProfile(
             presetID: "random-\(UUID().uuidString)",
-            displayName: "随机：iPad-ish",
+            displayName: t("Random: iPad-ish", "随机：iPad-ish"),
             userAgent: iPadSafari17UserAgent,
             acceptLanguages: defaultAcceptLanguages,
             platform: "iPad",
@@ -2811,7 +2974,7 @@ private enum FingerprintCatalog {
 
         return FingerprintProfile(
             presetID: "random-\(UUID().uuidString)",
-            displayName: "随机：iPhone-ish",
+            displayName: t("Random: iPhone-ish", "随机：iPhone-ish"),
             userAgent: iPhoneSafari17UserAgent,
             acceptLanguages: defaultAcceptLanguages,
             platform: "iPhone",
@@ -2874,7 +3037,7 @@ private enum ProfileStore {
             profiles = decoded
         }
         if !profiles.contains(where: { $0.id == defaultProfileID }) {
-            profiles.insert(WebProfile(id: defaultProfileID, name: "默认", createdAt: Date()), at: 0)
+            profiles.insert(WebProfile(id: defaultProfileID, name: t("Default", "默认"), createdAt: Date()), at: 0)
             save(profiles)
         }
         return profiles

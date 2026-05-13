@@ -1,0 +1,5 @@
+CFBundleDisplayName = "Multi-Profile Fingerprint Browser";
+CFBundleName = "Multi-Profile Fingerprint Browser";
+NSCameraUsageDescription = "Used for in-page video or multimodal input.";
+NSMicrophoneUsageDescription = "Used for in-page voice input.";
+NSDownloadsFolderUsageDescription = "Saves files downloaded from web pages to the Downloads folder.";

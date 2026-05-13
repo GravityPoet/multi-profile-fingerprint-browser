@@ -3,9 +3,14 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>zh_CN</string>
+	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
 	<key>CFBundleDisplayName</key>
-	<string>多账号隔离指纹浏览器</string>
+	<string>Multi-Profile Fingerprint Browser</string>
 	<key>CFBundleExecutable</key>
 	<string>MultiProfileFingerprintBrowser</string>
 	<key>CFBundleIconFile</key>
@@ -15,7 +20,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>多账号隔离指纹浏览器</string>
+	<string>Multi-Profile Fingerprint Browser</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -34,11 +39,11 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>用于网页内的视频或多模态输入。</string>
+	<string>Used for in-page video or multimodal input.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>用于网页内语音输入。</string>
+	<string>Used for in-page voice input.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>保存网页下载的文件到下载文件夹。</string>
+	<string>Saves files downloaded from web pages to the Downloads folder.</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="多账号隔离指纹浏览器"
+APP_NAME="Multi-Profile Fingerprint Browser"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 DMG_PATH="$ROOT/dist/$APP_NAME.dmg"
 STAGING="$ROOT/dist/dmg-staging"

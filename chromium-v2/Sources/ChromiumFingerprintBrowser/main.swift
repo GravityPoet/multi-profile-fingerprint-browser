@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 
 private let appID = "local.multi-profile-fingerprint-browser.chromium-v2"
 private let appName = "Chromium Fingerprint Browser v2"
+private let appIconResourceName = "AppIcon"
+private let appIconResourceExtension = "icns"
 
 private var isChinese: Bool {
     Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
@@ -390,6 +392,7 @@ private enum ProxyCheckService {
 
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
+    private var statusItem: NSStatusItem?
     private var profiles: [BrowserProfile] = []
     private var selectedIndex = 0
 
@@ -404,10 +407,65 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        configureApplicationIcon()
         profiles = ProfileStore.load()
         buildMenu()
+        installStatusItem()
         buildWindow()
         reloadUI()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func configureApplicationIcon() {
+        guard let image = Self.loadAppIcon() else {
+            return
+        }
+        NSApp.applicationIconImage = image
+    }
+
+    private static func loadAppIcon(fitting size: NSSize? = nil) -> NSImage? {
+        let sourceImage: NSImage?
+        if let iconURL = Bundle.main.url(forResource: appIconResourceName, withExtension: appIconResourceExtension) {
+            sourceImage = NSImage(contentsOf: iconURL)
+        } else {
+            sourceImage = NSApp.applicationIconImage
+        }
+
+        guard let image = sourceImage?.copy() as? NSImage else {
+            return nil
+        }
+        if let size {
+            image.size = size
+        }
+        return image
+    }
+
+    private func installStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = item
+        if let button = item.button {
+            button.image = Self.loadAppIcon(fitting: NSSize(width: 22, height: 22))
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.alignment = .center
+            button.toolTip = appName
+        }
+
+        let menu = NSMenu(title: appName)
+        menu.addItem(targetedItem(t("Show Window", "显示窗口"), #selector(showWindow(_:)), ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(targetedItem(t("Launch Current Profile", "启动当前空间"), #selector(launchProfile(_:)), ""))
+        menu.addItem(targetedItem(t("Open Fingerprint Test", "打开指纹检测"), #selector(openFingerprintTest(_:)), ""))
+        menu.addItem(targetedItem(t("Check Egress IP", "检测出口 IP"), #selector(checkIP(_:)), ""))
+        menu.addItem(NSMenuItem.separator())
+        let quitItem = NSMenuItem(title: t("Quit \(appName)", "退出 \(appName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+        menu.addItem(quitItem)
+        item.menu = menu
+    }
+
+    @objc private func showWindow(_ sender: Any?) {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

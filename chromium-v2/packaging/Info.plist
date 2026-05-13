@@ -8,6 +8,8 @@
 	<string>Chromium Fingerprint Browser v2</string>
 	<key>CFBundleExecutable</key>
 	<string>ChromiumFingerprintBrowser</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.multi-profile-fingerprint-browser.chromium-v2</string>
 	<key>CFBundleInfoDictionaryVersion</key>

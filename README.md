@@ -1,109 +1,111 @@
-# 多账号隔离指纹浏览器 (Multi-Profile Fingerprint Browser)
+**English** | [中文](README.zh-CN.md)
 
-一个 macOS 上免费、开源的指纹隔离浏览器。每个账号空间一套独立的 Cookie / 存储 / 浏览器指纹，让远端看到的是不同的设备 + 不同的用户。
+# Multi-Profile Fingerprint Browser
 
-旨在打破 Multilogin / GoLogin / AdsPower 等付费 anti-detect 浏览器的垄断，提供同等核心能力的本地、零订阅替代品。
+A free, open-source fingerprint-isolated browser for macOS. Every profile gets its own cookies, storage, and browser fingerprint — remote sites see a different device and a different user per profile.
 
-## 现状
+Built to break the paid anti-detect browser monopoly (Multilogin, GoLogin, AdsPower) by offering the same core capabilities as a local, zero-subscription alternative.
 
-- macOS 12+，Swift + WKWebView 单文件实现，约 3000 行
-- 已可用，处于 0.1.0 早期阶段。还在迭代抗检测细节
-- 仅 macOS，暂无 Windows / Linux 计划
+## Status
 
-## 核心能力
+- macOS 12+, Swift + WKWebView, single-file implementation (~3000 lines)
+- Usable, but in early 0.1.0. Anti-detection details still iterating.
+- macOS only. No Windows / Linux plans.
 
-### 账号空间隔离
-- 多 Profile，各自独立 Cookie / localStorage / IndexedDB / 缓存（macOS 14+ 用 `WKWebsiteDataStore(forIdentifier:)`，macOS 12-13 共享默认 Store）
-- 每个 Profile 可设独立首页
-- Cookie JSON 导入 / 导出
-- 一键清空当前账号空间全部数据
+## Core Features
 
-### 指纹层
-- 5 个内置预设：MacBook Air 13, MacBook Pro 14, iMac 5K, iPad 13, iPhone 15 Pro
-- 一键随机化（70% Mac / 20% iPad / 10% iPhone 加权）
-- Per-Profile 指纹独立持久化
-- 覆盖：UserAgent、`navigator.platform/language/languages/hardwareConcurrency/deviceMemory/maxTouchPoints`、`screen.*`、`devicePixelRatio`、`Intl.DateTimeFormat` 时区、`Date.prototype.getTimezoneOffset`、`screen.orientation`
+### Profile Isolation
+- Multiple profiles, each with its own cookies / localStorage / IndexedDB / cache (macOS 14+ via `WKWebsiteDataStore(forIdentifier:)`; macOS 12–13 falls back to the default store)
+- Per-profile homepage
+- Cookie JSON import / export
+- One-click wipe of all data for the current profile
 
-### 抗检测层（增强隐私）
-- Canvas `getImageData / toDataURL / toBlob` 像素级 stable-seed 噪声
-- WebGL `getParameter`（UNMASKED_VENDOR / RENDERER 伪装）+ `readPixels` 噪声
-- AudioBuffer `getChannelData` + AnalyserNode `getFloatFrequencyData` 浮点噪声
-- `navigator.userAgentData / plugins / mimeTypes / mediaDevices` 中和
-- `permissions.query` 永远返回 `prompt`
-- `matchMedia` hover / pointer / any-pointer 跟随触屏指纹
-- `Function.prototype.toString` 修补：所有 hook 函数返回 `function NAME() { [native code] }` 标准格式，过 toString 检测
-- 全部 hook 命名化（不是匿名箭头），过名字检测
+### Fingerprint Layer
+- 5 built-in presets: MacBook Air 13, MacBook Pro 14, iMac 5K, iPad 13, iPhone 15 Pro
+- One-click randomization (weighted 70% Mac / 20% iPad / 10% iPhone)
+- Per-profile fingerprint persisted independently
+- Overrides: UserAgent, `navigator.platform / language / languages / hardwareConcurrency / deviceMemory / maxTouchPoints`, `screen.*`, `devicePixelRatio`, `Intl.DateTimeFormat` timezone, `Date.prototype.getTimezoneOffset`, `screen.orientation`
 
-### 隐私层
-- WebRTC 全栈关闭（`RTCPeerConnection` 等设为 `undefined`，`enumerateDevices` 返回空），防 STUN 真实 IP 泄露
+### Anti-Detection Layer (Enhanced Privacy)
+- Canvas `getImageData / toDataURL / toBlob` pixel-level stable-seed noise
+- WebGL `getParameter` (UNMASKED_VENDOR / RENDERER spoofing) + `readPixels` noise
+- AudioBuffer `getChannelData` + AnalyserNode `getFloatFrequencyData` float noise
+- `navigator.userAgentData / plugins / mimeTypes / mediaDevices` neutralized
+- `permissions.query` always returns `prompt`
+- `matchMedia` hover / pointer / any-pointer tracks the touch-device fingerprint
+- `Function.prototype.toString` patched — all hooked functions return `function NAME() { [native code] }`, defeating toString-based detection
+- All hooks are named functions (not anonymous arrows), defeating name-based detection
+
+### Privacy Layer
+- WebRTC fully disabled (`RTCPeerConnection` etc set to `undefined`, `enumerateDevices` returns empty) — prevents STUN-based real IP leak
 - Global Privacy Control = true
 
-### 浏览器基础
-- 多标签（OS 级窗口聚合）
-- 历史前进后退、刷新、缩放、查找
-- 任意 https 首页
-- 内置指纹检测页（菜单栏 → 隐私 → 指纹检测）
+### Browser Basics
+- Multi-tab (aggregated via OS-level windows)
+- History back/forward, refresh, zoom, find
+- Arbitrary https homepage
+- Built-in fingerprint test page (menu → Privacy → Fingerprint Test)
 
-## 已知限制 / 与商业产品差距
+## Known Limitations / Gap vs. Commercial Products
 
-诚实写出来。如果是高对抗场景（Fortune 500 反欺诈、Cloudflare 高难度 Turnstile、专业指纹库 fingerprint.com 企业版），现状不一定能稳过。
+Stated honestly. For high-adversary scenarios (Fortune 500 anti-fraud, hard Cloudflare Turnstile, enterprise-grade fingerprint.com), current state may not reliably bypass.
 
-- **TLS / JA3 / JA4 指纹**：未做。系统 `URLSession` / WKWebView 的 TLS ClientHello 由 macOS 内核决定，无法在用户态改写。商业产品多用魔改 Chromium。
-- **HTTP/2 帧顺序、ALPS、HTTP/3 指纹**：未做。同上。
-- **WebRTC 真 IP 泄露**：通过禁用 WebRTC API 来防。如果业务必须 WebRTC，本工具不适合。
-- **`window.outerWidth / outerHeight`**：未改写。Mac 窗口真实尺寸暴露。和 `screen.width=393`（iPhone 预设）会有矛盾。这是为了保留可用的 Mac 窗口尺寸做的取舍。
-- **CSS `device-width / orientation` media query**：部分覆盖（hover/pointer），完整尺寸 media 未改写。
-- **Web Worker / iframe 隔离上下文**：注入用 `forMainFrameOnly: false` 已覆盖 iframe；Worker 上下文是否同样注入待验证。
-- **macOS 12 / 13**：`WKWebsiteDataStore` 不支持 per-identifier，多 Profile 共享默认 Store 退化为"只有指纹区分，不隔离 Cookie"。建议 macOS 14+。
-- **iOS 设备预设（iPhone / iPad）**：UA + screen 可换，但 safe-area-inset、字体列表、`window.matchMedia` 的部分 viewport 查询会穿帮。Mac 预设更稳。
+- **TLS / JA3 / JA4 fingerprint**: not done. macOS `URLSession` / WKWebView TLS ClientHello is controlled by the kernel — cannot be rewritten in userspace. Commercial products typically use modified Chromium.
+- **HTTP/2 frame order, ALPS, HTTP/3 fingerprint**: not done. Same reason.
+- **WebRTC real-IP leak**: mitigated by disabling the WebRTC API entirely. Not suitable if your workflow requires WebRTC.
+- **`window.outerWidth / outerHeight`**: not rewritten. The real Mac window dimensions remain exposed, which will conflict with `screen.width=393` (iPhone preset). Intentional tradeoff to preserve a usable Mac viewport.
+- **CSS `device-width / orientation` media queries**: partially covered (hover/pointer). Full viewport media queries not rewritten.
+- **Web Worker / iframe isolation context**: injection uses `forMainFrameOnly: false` so iframes are covered. Worker context coverage not yet verified.
+- **macOS 12 / 13**: `WKWebsiteDataStore` doesn't support per-identifier instances. Multiple profiles share the default store — degraded to "fingerprint-only isolation, no cookie isolation". macOS 14+ recommended.
+- **iOS device presets (iPhone / iPad)**: UA + screen swap fine, but `safe-area-inset`, font lists, and some `window.matchMedia` viewport queries will leak. Mac presets are more reliable.
 
-如果你做的是中低对抗场景（注册多个普通 SaaS、防止站点行为追踪、防止跨站设备识别、个人多账号工作流），现状的隔离强度通常够用。
+For mid-to-low-adversary scenarios (registering multiple ordinary SaaS accounts, blocking site behavior tracking, preventing cross-site device identification, personal multi-account workflows), the current isolation level is generally sufficient.
 
-## 与商业 anti-detect 浏览器的对比
+## Comparison with Commercial Anti-Detect Browsers
 
-| 能力 | 本项目 | Multilogin/GoLogin |
+| Capability | This project | Multilogin / GoLogin |
 |---|---|---|
-| 多 Profile 隔离 | ✅ | ✅ |
-| Canvas/WebGL/Audio 噪声 | ✅ | ✅ |
-| UA / 屏幕 / 时区伪装 | ✅ | ✅ |
-| 指纹随机化 | ✅ | ✅ |
-| WebRTC 关闭 | ✅ | ✅ |
-| `toString` 检测防御 | ✅ | ✅ |
-| TLS / JA3 指纹 | ❌ | ✅ |
-| HTTP/2 fingerprint | ❌ | ✅ |
-| 真 Chromium 内核 | ❌ (WKWebView) | ✅ |
-| 价格 | 0 元 | $99/月起 |
+| Multi-profile isolation | yes | yes |
+| Canvas / WebGL / Audio noise | yes | yes |
+| UA / screen / timezone spoof | yes | yes |
+| Fingerprint randomization | yes | yes |
+| WebRTC disabled | yes | yes |
+| `toString` detection defense | yes | yes |
+| TLS / JA3 fingerprint | no | yes |
+| HTTP/2 fingerprint | no | yes |
+| Real Chromium engine | no (WKWebView) | yes |
+| Price | $0 | from $99/month |
 
-## 构建
+## Build
 
 ```bash
 swift build -c release
-# 或打包成 .app
+# Package as .app
 ./packaging/make-app.sh
-# 打包 DMG
+# Package as DMG
 ./packaging/make-dmg.sh
 ```
 
-需要 Xcode Command Line Tools。
+Requires Xcode Command Line Tools.
 
-## 设计选择
+## Design Choices
 
-- **WKWebView 而不是 Chromium 内核**：单文件 Swift、零依赖、二进制小。代价：无法改 TLS 指纹、无法改 HTTP/2 帧。对个人多账号场景够用。
-- **本地配置，无云端**：UserDefaults + Codable，所有数据在你的机器上。
-- **指纹基于 stable seed**：同 Profile 多次启动 Canvas/WebGL/Audio 噪声一致，避免"每次刷新指纹都变"的反追踪信号。
+- **WKWebView instead of a Chromium fork**: single-file Swift, zero dependencies, small binary. Tradeoff: cannot modify TLS fingerprint, cannot modify HTTP/2 frames. Sufficient for personal multi-account use cases.
+- **Local config, no cloud**: UserDefaults + Codable. All data stays on your machine.
+- **Stable-seed fingerprint**: Canvas / WebGL / Audio noise is consistent across reloads for the same profile, avoiding the "fingerprint changes every refresh" anti-tracking signal.
 
-## 路线图
+## Roadmap
 
-- [ ] HTTP 头 `Accept-Language` / `Sec-CH-UA` 子请求覆盖（不只主请求）
-- [ ] `screen` getter 通过 Object.defineProperty on Worker scope（如果 WKWebView 允许）
-- [ ] Per-Profile 代理设置（HTTP / SOCKS5）
-- [ ] 指纹模板导入导出（社区共享）
-- [ ] Profile 备份 / 恢复（已有 Cookie 导出 + 指纹导出框架，未完整端到端）
+- [ ] HTTP header `Accept-Language` / `Sec-CH-UA` sub-request coverage (not just main request)
+- [ ] `screen` getter via `Object.defineProperty` on Worker scope (if WKWebView allows)
+- [ ] Per-profile proxy (HTTP / SOCKS5)
+- [ ] Fingerprint template import / export (community sharing)
+- [ ] Profile backup / restore (cookie export + fingerprint export framework already in place; end-to-end not complete)
 
 ## License
 
-MIT。
+MIT.
 
-## 关联项目
+## Related Project
 
-- [chatgpt-web-desktop](https://github.com/GravityPoet/chatgpt-web-desktop) — 本项目的前身，专注 ChatGPT macOS 客户端。该项目把指纹浏览器部分拆出来独立维护。
+- [chatgpt-web-desktop](https://github.com/GravityPoet/chatgpt-web-desktop) — the upstream project this was split off from, focused on the ChatGPT macOS client.

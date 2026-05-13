@@ -12,9 +12,10 @@ It does not modify the stable WKWebView v1 app. The current implementation is a 
   - User-Agent
   - `Accept-Language` / `--lang`
   - timezone via `TZ` process environment
-  - window size
+  - screen preset for diagnostics and consistency checks
   - device scale factor
   - WebRTC IP policy
+- Chromium browser window size is no longer forced on every launch; each profile's Chromium `user-data-dir` keeps the size you last set.
 - Per-profile proxy launch args:
   - Direct: `--no-proxy-server`
   - System: no proxy override

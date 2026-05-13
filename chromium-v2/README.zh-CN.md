@@ -14,9 +14,10 @@
   - User-Agent
   - `Accept-Language` / `--lang`
   - 通过 `TZ` 进程环境设置时区
-  - 窗口尺寸
+  - 用于检测和一致性检查的屏幕预设
   - device scale factor
   - WebRTC IP policy
+- Chromium 浏览器窗口大小不再每次启动强制覆盖；同一个 Profile 的 Chromium `user-data-dir` 会记住你上次调过的大小。
 - 每个 Profile 独立代理启动参数：
   - 直连：`--no-proxy-server`
   - 跟随系统：不覆盖代理

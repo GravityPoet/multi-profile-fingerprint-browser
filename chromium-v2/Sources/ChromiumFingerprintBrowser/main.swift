@@ -7,6 +7,7 @@ private let appID = "local.multi-profile-fingerprint-browser.chromium-v2"
 private let appName = "Chromium Fingerprint Browser v2"
 private let appIconResourceName = "AppIcon"
 private let appIconResourceExtension = "icns"
+private let controlWindowFrameDefaultsKey = "ChromiumFingerprintBrowser.ControlWindowFrame"
 
 private var isChinese: Bool {
     Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
@@ -295,7 +296,6 @@ private enum ChromiumLauncher {
             "--no-default-browser-check",
             "--lang=\(profile.fingerprint.acceptLanguages.first ?? "en-US")",
             "--user-agent=\(profile.fingerprint.userAgent)",
-            "--window-size=\(profile.fingerprint.screenWidth),\(profile.fingerprint.screenHeight)",
             "--force-device-scale-factor=\(profile.fingerprint.deviceScaleFactor)",
             "--force-webrtc-ip-handling-policy=\(profile.fingerprint.webRTCPolicy)",
         ]
@@ -390,7 +390,7 @@ private enum ProxyCheckService {
     }
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var statusItem: NSStatusItem?
     private var profiles: [BrowserProfile] = []
@@ -474,6 +474,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        persistControlWindowFrame()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        persistControlWindowFrame()
+        sender.orderOut(nil)
+        return false
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        persistControlWindowFrame()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        persistControlWindowFrame()
+    }
+
     private func buildMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -501,15 +519,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildWindow() {
+        let defaultRect = NSRect(x: 0, y: 0, width: 760, height: 520)
+        let restoredFrame = Self.restoredControlWindowFrame()
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
+            contentRect: restoredFrame ?? defaultRect,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = appName
-        window.center()
+        window.delegate = self
+        window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 700, height: 480)
+        if restoredFrame == nil {
+            window.center()
+        }
 
         let root = NSStackView()
         root.orientation = .vertical
@@ -523,8 +547,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         root.addArrangedSubview(title)
 
         let subtitle = NSTextField(labelWithString: t(
-            "Each profile launches Chromium with its own user-data-dir, proxy, timezone, language, UA, window size, and WebRTC policy. This is isolated from the WKWebView v1 app.",
-            "每个空间用独立 user-data-dir、代理、时区、语言、UA、窗口尺寸和 WebRTC 策略启动 Chromium。它与 WKWebView v1 主程序隔离。"
+            "Each profile launches Chromium with its own user-data-dir, proxy, timezone, language, UA, screen preset, and WebRTC policy. Chromium keeps the browser window size inside that profile.",
+            "每个空间用独立 user-data-dir、代理、时区、语言、UA、屏幕预设和 WebRTC 策略启动 Chromium。浏览器窗口大小由该 Chromium 空间自己记住。"
         ))
         subtitle.maximumNumberOfLines = 3
         subtitle.lineBreakMode = .byWordWrapping
@@ -542,6 +566,56 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.textColor = .secondaryLabelColor
         root.addArrangedSubview(statusLabel)
+    }
+
+    private func persistControlWindowFrame() {
+        guard window != nil else {
+            return
+        }
+        let frame = window.frame
+        UserDefaults.standard.set([
+            "x": frame.origin.x,
+            "y": frame.origin.y,
+            "width": frame.size.width,
+            "height": frame.size.height,
+        ], forKey: controlWindowFrameDefaultsKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    private static func restoredControlWindowFrame() -> NSRect? {
+        guard let raw = UserDefaults.standard.dictionary(forKey: controlWindowFrameDefaultsKey),
+              let x = raw["x"] as? CGFloat,
+              let y = raw["y"] as? CGFloat,
+              let width = raw["width"] as? CGFloat,
+              let height = raw["height"] as? CGFloat else {
+            return nil
+        }
+        let frame = NSRect(x: x, y: y, width: max(width, 700), height: max(height, 480))
+        return clampToVisibleScreen(frame)
+    }
+
+    private static func clampToVisibleScreen(_ frame: NSRect) -> NSRect {
+        guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(frame) }) ?? NSScreen.main else {
+            return frame
+        }
+        let visible = screen.visibleFrame
+        var clamped = frame
+        clamped.size.width = min(max(clamped.size.width, 700), visible.size.width)
+        clamped.size.height = min(max(clamped.size.height, 480), visible.size.height)
+
+        if clamped.maxX > visible.maxX {
+            clamped.origin.x = visible.maxX - clamped.size.width
+        }
+        if clamped.minX < visible.minX {
+            clamped.origin.x = visible.minX
+        }
+        if clamped.maxY > visible.maxY {
+            clamped.origin.y = visible.maxY - clamped.size.height
+        }
+        if clamped.minY < visible.minY {
+            clamped.origin.y = visible.minY
+        }
+        return clamped.integral
     }
 
     private func row(_ label: String, _ view: NSControl, width: CGFloat, action: Selector? = nil) -> NSStackView {

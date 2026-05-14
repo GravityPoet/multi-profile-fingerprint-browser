@@ -203,23 +203,28 @@ final class CamoufoxLauncher {
     /// - Bool → `true` / `false`
     /// - Int/Double → bare number
     /// - String → `"..."` with `\` and `"` escaped
+    ///
+    /// AnyHashable bridges Int and Bool through NSNumber, so `value as? Bool`
+    /// succeeds on `Int(0)` and returns `false`. Inspect the concrete base
+    /// type instead of relying on conditional casts.
     static func formatPrefValue(_ value: AnyHashable) -> String {
-        if let b = value as? Bool {
-            return b ? "true" : "false"
+        let base = value.base
+        if base is Bool {
+            return (base as! Bool) ? "true" : "false"
         }
-        if let i = value as? Int {
-            return String(i)
+        if base is Int {
+            return String(base as! Int)
         }
-        if let d = value as? Double {
-            return String(d)
+        if base is Double {
+            return String(base as! Double)
         }
-        if let s = value as? String {
+        if let s = base as? String {
             let escaped = s
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
             return "\"\(escaped)\""
         }
-        return "\"\(value.base)\""
+        return "\"\(base)\""
     }
 
     // MARK: Environment + args

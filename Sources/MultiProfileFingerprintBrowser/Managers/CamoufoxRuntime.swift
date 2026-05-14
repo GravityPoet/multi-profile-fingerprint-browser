@@ -1,0 +1,219 @@
+import Darwin
+import Foundation
+
+enum CamoufoxRuntimeError: Error, LocalizedError {
+    case unsupportedArchitecture(String)
+    case downloadFailed(URL, underlying: Error)
+    case unexpectedHTTPStatus(Int, URL)
+    case sha256Mismatch(expected: String, actual: String)
+    case extractFailed(underlying: Error)
+    case binaryMissing(URL)
+    case ioFailure(URL, underlying: Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedArchitecture(let arch):
+            return "Camoufox is not yet bundled for architecture: \(arch). v1.2.0 ships arm64 only."
+        case .downloadFailed(let url, let err):
+            return "Download from \(url.absoluteString) failed: \(err.localizedDescription)"
+        case .unexpectedHTTPStatus(let code, let url):
+            return "HTTP \(code) from \(url.absoluteString)"
+        case .sha256Mismatch(let expected, let actual):
+            return "SHA256 mismatch. expected=\(expected) actual=\(actual)"
+        case .extractFailed(let err):
+            return "Extract failed: \(err.localizedDescription)"
+        case .binaryMissing(let url):
+            return "Camoufox binary missing after extract at \(url.path)"
+        case .ioFailure(let url, let err):
+            return "I/O failure at \(url.path): \(err.localizedDescription)"
+        }
+    }
+}
+
+/// One immutable release descriptor. Lookup keyed by host CPU arch.
+struct CamoufoxRelease {
+    let version: String
+    let arch: String
+    let downloadURL: URL
+    let sha256: String
+    /// Filename inside the cache + name of the extracted directory.
+    let archiveFilename: String
+    /// Path inside the extracted directory to the Camoufox executable.
+    let binarySubpath: String
+}
+
+extension CamoufoxRelease {
+    static let macArm64 = CamoufoxRelease(
+        version: "150.0.2-beta.25",
+        arch: "arm64",
+        downloadURL: URL(string: "https://github.com/daijro/camoufox/releases/download/v150.0.2-beta.25/camoufox-150.0.2-alpha.25-mac.arm64.zip")!,
+        sha256: "a7f03c1def1ad63029b0d522353039e88afadbdef2517755b733e6931a462eb2",
+        archiveFilename: "camoufox-150.0.2-beta.25-mac.arm64.zip",
+        binarySubpath: "Camoufox.app/Contents/MacOS/camoufox"
+    )
+
+    static func current() throws -> CamoufoxRelease {
+        let arch = CamoufoxRuntime.hostArchitecture()
+        switch arch {
+        case "arm64":
+            return .macArm64
+        default:
+            throw CamoufoxRuntimeError.unsupportedArchitecture(arch)
+        }
+    }
+}
+
+/// Camoufox runtime status, observable by UI.
+enum CamoufoxRuntimeStatus: Equatable {
+    case notReady
+    case downloading(progress: Double)
+    case verifying
+    case extracting
+    case ready(URL)
+    case failed(String)
+}
+
+/// Manages the on-disk Camoufox binary used to launch profiles.
+/// Idempotent: re-running `ensureReady()` after a successful install is a no-op
+/// other than verifying the binary still exists.
+final class CamoufoxRuntime {
+    static let shared = CamoufoxRuntime()
+
+    private(set) var status: CamoufoxRuntimeStatus = .notReady {
+        didSet {
+            AppLogger.debug("CamoufoxRuntime status -> \(status)")
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.statusListeners.forEach { $0(self.status) }
+            }
+        }
+    }
+    private var statusListeners: [(CamoufoxRuntimeStatus) -> Void] = []
+
+    private init() {}
+
+    // MARK: Public API
+
+    /// Adds a status listener. Called on the main queue.
+    func observe(_ listener: @escaping (CamoufoxRuntimeStatus) -> Void) {
+        statusListeners.append(listener)
+        listener(status)
+    }
+
+    /// Returns the path to the ready Camoufox binary.
+    /// Downloads + verifies + extracts on first call.
+    /// Subsequent calls return immediately if the binary is present.
+    @discardableResult
+    func ensureReady() throws -> URL {
+        let release = try CamoufoxRelease.current()
+        let binaryURL = expectedBinaryURL(for: release)
+
+        if FileManager.default.isExecutableFile(atPath: binaryURL.path) {
+            status = .ready(binaryURL)
+            return binaryURL
+        }
+
+        try AppPaths.ensureExists()
+        let archiveURL = AppPaths.downloadsCacheDir.appendingPathComponent(release.archiveFilename)
+
+        try downloadIfNeeded(release: release, to: archiveURL)
+        try verify(archive: archiveURL, expected: release.sha256)
+        try extract(release: release, archive: archiveURL)
+
+        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
+            throw CamoufoxRuntimeError.binaryMissing(binaryURL)
+        }
+
+        status = .ready(binaryURL)
+        AppLogger.info("Camoufox runtime ready at \(binaryURL.path)")
+        return binaryURL
+    }
+
+    func expectedBinaryURL(for release: CamoufoxRelease) -> URL {
+        extractedDir(for: release).appendingPathComponent(release.binarySubpath)
+    }
+
+    func extractedDir(for release: CamoufoxRelease) -> URL {
+        AppPaths.runtimeDir.appendingPathComponent("camoufox-\(release.version)-\(release.arch)", isDirectory: true)
+    }
+
+    // MARK: Steps
+
+    private func downloadIfNeeded(release: CamoufoxRelease, to archiveURL: URL) throws {
+        if FileManager.default.fileExists(atPath: archiveURL.path) {
+            AppLogger.info("Using cached Camoufox archive at \(archiveURL.path)")
+            return
+        }
+        status = .downloading(progress: 0)
+        AppLogger.info("Downloading Camoufox from \(release.downloadURL.absoluteString)")
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var capturedError: Error?
+        var capturedTempURL: URL?
+        var capturedResponse: URLResponse?
+
+        let task = URLSession.shared.downloadTask(with: release.downloadURL) { tempURL, response, error in
+            capturedTempURL = tempURL
+            capturedResponse = response
+            capturedError = error
+            semaphore.signal()
+        }
+        task.resume()
+        semaphore.wait()
+
+        if let error = capturedError {
+            throw CamoufoxRuntimeError.downloadFailed(release.downloadURL, underlying: error)
+        }
+        if let http = capturedResponse as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw CamoufoxRuntimeError.unexpectedHTTPStatus(http.statusCode, release.downloadURL)
+        }
+        guard let tempURL = capturedTempURL else {
+            throw CamoufoxRuntimeError.downloadFailed(
+                release.downloadURL,
+                underlying: NSError(domain: "CamoufoxRuntime", code: -1)
+            )
+        }
+        do {
+            try FileManager.default.moveItem(at: tempURL, to: archiveURL)
+        } catch {
+            throw CamoufoxRuntimeError.ioFailure(archiveURL, underlying: error)
+        }
+    }
+
+    private func verify(archive: URL, expected: String) throws {
+        status = .verifying
+        let actual = try SHA256Hasher.hash(fileAt: archive)
+        guard actual.caseInsensitiveCompare(expected) == .orderedSame else {
+            try? FileManager.default.removeItem(at: archive)
+            throw CamoufoxRuntimeError.sha256Mismatch(expected: expected, actual: actual)
+        }
+        AppLogger.info("Camoufox archive SHA256 verified")
+    }
+
+    private func extract(release: CamoufoxRelease, archive: URL) throws {
+        status = .extracting
+        let destDir = extractedDir(for: release)
+        if FileManager.default.fileExists(atPath: destDir.path) {
+            try FileManager.default.removeItem(at: destDir)
+        }
+        do {
+            try ZipExtractor.unzip(archive, into: destDir)
+        } catch {
+            throw CamoufoxRuntimeError.extractFailed(underlying: error)
+        }
+        AppLogger.info("Camoufox extracted into \(destDir.path)")
+    }
+
+    // MARK: Host architecture
+
+    static func hostArchitecture() -> String {
+        var info = utsname()
+        uname(&info)
+        let arch = withUnsafePointer(to: &info.machine) { ptr -> String in
+            ptr.withMemoryRebound(to: CChar.self, capacity: Int(_SYS_NAMELEN)) { cstr in
+                String(cString: cstr)
+            }
+        }
+        return arch
+    }
+}

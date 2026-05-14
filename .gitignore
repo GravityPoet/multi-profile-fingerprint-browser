@@ -10,3 +10,5 @@ dist/
 .vscode/
 .idea/
 Package.resolved
+chromium-v2/cef/build/
+chromium-v2/cef/third_party/

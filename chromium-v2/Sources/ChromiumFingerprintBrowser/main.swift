@@ -241,14 +241,20 @@ private enum ProfileStore {
     }
 
     static func userDataDirectory(for profile: BrowserProfile) throws -> URL {
+        let dir = try profileRootDirectory(for: profile).appendingPathComponent("user-data", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func profileRootDirectory(for profile: BrowserProfile) throws -> URL {
         let root = supportDirectory.appendingPathComponent("profiles", isDirectory: true)
-        let dir = root.appendingPathComponent(profile.id, isDirectory: true).appendingPathComponent("user-data", isDirectory: true)
+        let dir = root.appendingPathComponent(profile.id, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
     static func testPageURL(for profile: BrowserProfile) throws -> URL {
-        let dir = supportDirectory.appendingPathComponent("profiles", isDirectory: true).appendingPathComponent(profile.id, isDirectory: true)
+        let dir = try profileRootDirectory(for: profile)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("fingerprint-test.html")
         try FingerprintTestPage.html(profile: profile).data(using: .utf8)?.write(to: file, options: .atomic)
@@ -256,57 +262,70 @@ private enum ProfileStore {
     }
 }
 
-private enum ChromiumLocator {
+private enum EmbeddedCEFBrowser {
     static func executableURL() -> URL? {
-        if let raw = ProcessInfo.processInfo.environment["CHROMIUM_EXECUTABLE"],
+        if let raw = ProcessInfo.processInfo.environment["MPFB_CEF_EXECUTABLE"],
            !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            FileManager.default.isExecutableFile(atPath: raw) {
             return URL(fileURLWithPath: raw)
         }
 
-        let candidates = [
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }.map(URL.init(fileURLWithPath:))
+        var candidates: [URL] = []
+        if let frameworksURL = Bundle.main.privateFrameworksURL {
+            candidates.append(
+                frameworksURL
+                    .appendingPathComponent("ChromiumFingerprintCEF.app", isDirectory: true)
+                    .appendingPathComponent("Contents/MacOS/ChromiumFingerprintCEF")
+            )
+        }
+
+        candidates.append(
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("cef/build/Release/ChromiumFingerprintCEF.app", isDirectory: true)
+                .appendingPathComponent("Contents/MacOS/ChromiumFingerprintCEF")
+        )
+
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 }
 
 private enum ChromiumLauncher {
     static func launch(profile: BrowserProfile, targetURL: URL? = nil) throws {
-        guard let executable = ChromiumLocator.executableURL() else {
+        guard let executable = EmbeddedCEFBrowser.executableURL() else {
             throw NSError(
                 domain: "ChromiumFingerprintBrowser",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: t(
-                    "No Chromium-family browser found. Install Chromium/Chrome, or set CHROMIUM_EXECUTABLE to the browser executable.",
-                    "没有找到 Chromium 家族浏览器。请安装 Chromium/Chrome，或设置 CHROMIUM_EXECUTABLE 指向浏览器可执行文件。"
+                    "Bundled CEF browser is missing. Run ./packaging/make-app.sh, or set MPFB_CEF_EXECUTABLE to ChromiumFingerprintCEF.",
+                    "内置 CEF 浏览器组件缺失。请运行 ./packaging/make-app.sh，或设置 MPFB_CEF_EXECUTABLE 指向 ChromiumFingerprintCEF。"
                 )]
             )
         }
 
+        let profileRoot = try ProfileStore.profileRootDirectory(for: profile)
         let userDataDir = try ProfileStore.userDataDirectory(for: profile)
+        let target = targetURL?.absoluteString ?? profile.homepage
         var args = [
-            "--user-data-dir=\(userDataDir.path)",
-            "--profile-directory=Default",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--lang=\(profile.fingerprint.acceptLanguages.first ?? "en-US")",
-            "--user-agent=\(profile.fingerprint.userAgent)",
-            "--force-device-scale-factor=\(profile.fingerprint.deviceScaleFactor)",
-            "--force-webrtc-ip-handling-policy=\(profile.fingerprint.webRTCPolicy)",
+            "--mpfb-profile-id=\(profile.id)",
+            "--mpfb-profile-name=\(profile.name)",
+            "--mpfb-homepage=\(target)",
+            "--mpfb-user-agent=\(profile.fingerprint.userAgent)",
+            "--mpfb-accept-languages=\(profile.fingerprint.acceptLanguages.joined(separator: ","))",
+            "--mpfb-timezone=\(profile.fingerprint.timezone)",
+            "--mpfb-web-rtc-policy=\(profile.fingerprint.webRTCPolicy)",
+            "--mpfb-device-scale-factor=\(profile.fingerprint.deviceScaleFactor)",
+            "--mpfb-screen-width=\(profile.fingerprint.screenWidth)",
+            "--mpfb-screen-height=\(profile.fingerprint.screenHeight)",
+            "--mpfb-root-cache-path=\(profileRoot.path)",
+            "--mpfb-cache-path=\(userDataDir.path)",
+            "--mpfb-window-bounds-path=\(profileRoot.appendingPathComponent("cef-window-bounds.txt").path)",
+            "--mpfb-proxy-mode=\(profile.proxy.normalized.mode.rawValue)",
         ]
 
-        if let proxyArg = profile.proxy.chromiumArgument {
-            args.append(proxyArg)
-        }
-
-        let target = targetURL?.absoluteString ?? profile.homepage
-        if !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            args.append(target)
+        let proxy = profile.proxy.normalized
+        if proxy.mode.needsEndpoint, let port = proxy.port, !proxy.host.isEmpty {
+            args.append("--mpfb-proxy-host=\(proxy.host)")
+            args.append("--mpfb-proxy-port=\(port)")
         }
 
         let process = Process()
@@ -547,8 +566,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         root.addArrangedSubview(title)
 
         let subtitle = NSTextField(labelWithString: t(
-            "Each profile launches Chromium with its own user-data-dir, proxy, timezone, language, UA, screen preset, and WebRTC policy. Chromium keeps the browser window size inside that profile.",
-            "每个空间用独立 user-data-dir、代理、时区、语言、UA、屏幕预设和 WebRTC 策略启动 Chromium。浏览器窗口大小由该 Chromium 空间自己记住。"
+            "Each profile opens the bundled CEF/Chromium runtime with its own cache, cookies, localStorage, proxy, timezone, language, UA, screen preset, and WebRTC policy.",
+            "每个空间打开随 app 打包的 CEF/Chromium 内核，并使用独立 cache、cookies、localStorage、代理、时区、语言、UA、屏幕预设和 WebRTC 策略。"
         ))
         subtitle.maximumNumberOfLines = 3
         subtitle.lineBreakMode = .byWordWrapping
@@ -725,10 +744,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func summary(for profile: BrowserProfile) -> String {
         let ip = profile.lastEgressIP ?? t("not checked", "未检测")
-        let executable = ChromiumLocator.executableURL()?.path ?? t("not found", "未找到")
+        let executable = EmbeddedCEFBrowser.executableURL()?.path ?? t("not found", "未找到")
         return t(
-            "Chromium: \(executable)\nUser data: \(ProfileStore.supportDirectory.path)/profiles/\(profile.id)/user-data\nProxy: \(profile.proxy.summary)\nLast egress IP: \(ip)",
-            "Chromium：\(executable)\n用户数据：\(ProfileStore.supportDirectory.path)/profiles/\(profile.id)/user-data\n代理：\(profile.proxy.summary)\n上次出口 IP：\(ip)"
+            "Embedded CEF: \(executable)\nUser data: \(ProfileStore.supportDirectory.path)/profiles/\(profile.id)/user-data\nProxy: \(profile.proxy.summary)\nLast egress IP: \(ip)",
+            "内置 CEF：\(executable)\n用户数据：\(ProfileStore.supportDirectory.path)/profiles/\(profile.id)/user-data\n代理：\(profile.proxy.summary)\n上次出口 IP：\(ip)"
         )
     }
 

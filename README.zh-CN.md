@@ -121,9 +121,9 @@ swift build -c release
 - [x] v1.1 iframe / Worker 检测覆盖
 - [x] v1.1 Profile 配置备份 / 恢复
 - [x] v1.1 代理映射与出口 IP 检测面板
-- [x] v2 Chromium launcher 子项目：独立 `user-data-dir`、启动参数、代理映射、IP 检测和本地指纹检测页
+- [x] v2 CEF/Chromium 子项目：随 app 打包 runtime，独立 `root_cache_path` / `cache_path`、代理映射、IP 检测和本地指纹检测页
 - [ ] HTTP 头 `Accept-Language` / `Sec-CH-UA` 子请求覆盖（不只主请求）
-- [ ] 等依赖体积和打包方案接受后，把 v2 launcher 层替换成嵌入式 CEF
+- [x] 把 v2 launcher 层替换成嵌入式 CEF
 - [ ] 指纹模板导入导出（社区共享）
 
 ## License

@@ -121,9 +121,9 @@ Requires Xcode Command Line Tools.
 - [x] v1.1 iframe / Worker diagnostic coverage
 - [x] v1.1 profile config backup / restore
 - [x] v1.1 proxy mapping and egress IP check panel
-- [x] v2 Chromium launcher subproject with independent `user-data-dir`, launch args, proxy mapping, IP check, and local fingerprint test page
+- [x] v2 CEF/Chromium subproject with bundled runtime, per-profile `root_cache_path` / `cache_path`, proxy mapping, IP check, and local fingerprint test page
 - [ ] HTTP header `Accept-Language` / `Sec-CH-UA` sub-request coverage (not just main request)
-- [ ] Replace v2 launcher layer with embedded CEF once dependency size and packaging are accepted
+- [x] Replace v2 launcher layer with embedded CEF
 - [ ] Fingerprint template import / export (community sharing)
 
 ## License

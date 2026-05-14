@@ -16,7 +16,6 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CFNetwork"),
-                .linkedFramework("WebKit"),
                 .linkedFramework("UniformTypeIdentifiers"),
             ]
         ),

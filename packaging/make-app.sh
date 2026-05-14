@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Multi-Profile Fingerprint Browser"
+APP_NAME="Multi-Profile Anti-Detect Browser"
 BINARY_NAME="MultiProfileFingerprintBrowser"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
@@ -10,6 +10,7 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 ICON_SOURCE="$ROOT/packaging/AppIcon.icns"
 LPROJ_SOURCE="$ROOT/packaging/lproj"
+RESOURCE_BUNDLE="$ROOT/.build/release/${BINARY_NAME}_${BINARY_NAME}.bundle"
 
 cd "$ROOT"
 
@@ -20,6 +21,13 @@ mkdir -p "$MACOS" "$RESOURCES"
 
 cp ".build/release/$BINARY_NAME" "$MACOS/$BINARY_NAME"
 cp "$ROOT/packaging/Info.plist" "$CONTENTS/Info.plist"
+
+if [[ -d "$RESOURCE_BUNDLE" ]]; then
+  cp -R "$RESOURCE_BUNDLE" "$RESOURCES/"
+else
+  echo "error: SwiftPM resource bundle not found at $RESOURCE_BUNDLE" >&2
+  exit 1
+fi
 
 if [[ -f "$ICON_SOURCE" ]]; then
   cp "$ICON_SOURCE" "$RESOURCES/AppIcon.icns"

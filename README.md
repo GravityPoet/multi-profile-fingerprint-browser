@@ -1,135 +1,174 @@
 **English** | [中文](README.zh-CN.md)
 
-# Multi-Profile Fingerprint Browser
+# Multi-Profile Anti-Detect Browser
 
-A free, open-source Safari/WebKit-family consistent privacy fingerprint browser for macOS. Every profile gets its own cookies, storage, and stable Safari-device fingerprint, reducing cross-account and cross-site fingerprint linkage.
+Free, open-source, macOS-native anti-detect browser. Each profile is a fully
+isolated Camoufox (Firefox-patched) instance with its own fingerprint, proxy,
+cookies, and storage. Free alternative to Multilogin / GoLogin / AdsPower
+for personal multi-account workflows.
 
-This is not a true anti-detect browser and cannot fill TLS / HTTP/2 / Chromium-engine fingerprint gaps. Its scope is local, zero-subscription, low-anomaly multi-profile privacy: every profile looks like a different Safari/WebKit device, never Chrome or Firefox.
+`v1.2.0` is a full rewrite. The previous WKWebView-based privacy shell is
+preserved on the `legacy-wkwebview-cef` branch.
 
-## Status
+## What Changed in 1.2.0
 
-- macOS 12+, Swift + WKWebView, single-file implementation (~4500 lines)
-- `v0.1.0` baseline is preserved as the stable WKWebView implementation.
-- Current line is `v1.1`: a Safari/WebKit privacy-enhanced release focused on stability, honesty, and low-anomaly profile consistency.
-- macOS only. No Windows / Linux plans.
+| | v1.1 (WKWebView) | v1.2.0 (Camoufox) |
+|---|---|---|
+| Engine | macOS WKWebView | Camoufox v150 (Firefox-patched) |
+| TLS / JA3 / JA4 fingerprint | not modified | inherited from Firefox + NSS |
+| HTTP/2 frame order / ALPS | not modified | inherited from Firefox |
+| Canvas / WebGL / Audio noise | JS-hook based | C++ patches in Camoufox |
+| `navigator.*` spoofing | JS hooks (toString-detectable) | binary-level, undetectable |
+| Per-profile proxy | best-effort | real Firefox `network.proxy.*` prefs |
+| User agent → screen → timezone coherence | mac/iOS family only | bundled v150 preset DB |
 
-## Version Lines
+This is the first version that can plausibly stand in for a commercial
+anti-detect browser in mid-adversary scenarios.
 
-- **v1: Safari/WebKit privacy isolation** — this repository. Low-anomaly Safari/WebKit-family profile isolation, no subscription, no Chromium/TLS claims.
-- **v2: Chromium/CEF experiment** — implemented as the isolated [`chromium-v2`](chromium-v2/README.md) subproject. This is the line that owns cleaner per-profile proxy and Chromium user-data isolation.
+## How It Works
 
-## Core Features
+1. The app downloads Camoufox v150 (≈300 MB) into
+   `~/Library/Application Support/MultiProfileFingerprintBrowser/runtime/` on
+   first use. The archive is SHA256-verified against the upstream release.
+2. Each profile is one row in the list, persisted as
+   `profiles/<uuid>/meta.json`.
+3. When you press **Launch**, the app:
+   - Writes a per-profile Firefox `user.js` with proxy prefs, accept-languages,
+     and Marionette settings.
+   - JSON-encodes the fingerprint and splits it across `CAMOU_CONFIG_1..N`
+     environment variables (the upstream protocol).
+   - Spawns Camoufox with `--profile <dir> --no-remote --new-instance`.
+4. Camoufox reads the env vars at startup, applies the fingerprint at the
+   C++ layer, and writes results to its own profile directory.
+
+The host Swift app never touches Firefox internals at runtime — every spoof
+runs inside the patched browser binary.
+
+## Features
 
 ### Profile Isolation
-- Multiple profiles, each with its own cookies / localStorage / IndexedDB / cache (macOS 14+ via `WKWebsiteDataStore(forIdentifier:)`; macOS 12–13 falls back to the default store)
-- Per-profile homepage
-- Cookie JSON import / export
-- One-click wipe of all data for the current profile
+- Per-profile Firefox profile directory (`firefox-profile/`)
+- Per-profile cookies, localStorage, IndexedDB, cache, history
+- Per-profile bookmarks, addons (Firefox-compatible)
+- Per-profile launch independence (multiple profiles open simultaneously)
 
-### Fingerprint Layer
-- 5 built-in presets: MacBook Air 13, MacBook Pro 14, iMac 5K, iPad 13, iPhone 15 Pro
-- One-click randomization defaults to a Mac Safari stable fingerprint; iPhone/iPad presets remain explicit choices because large Mac windows make them higher risk
-- Per-profile fingerprint persisted independently
-- Per-profile pinned timezone, resolved from the primary language (for example `en-US` maps to US timezones; `zh-CN` maps to `Asia/Shanghai`)
-- Consistency checks for UA family, language/timezone, screen size, touch capability, and mobile viewport risk
-- Overrides: UserAgent, `navigator.platform / language / languages / hardwareConcurrency / deviceMemory / maxTouchPoints`, `screen.*`, `devicePixelRatio`, `Intl.DateTimeFormat` timezone, `Date.prototype.getTimezoneOffset`, `screen.orientation`
+### Fingerprint Spoofing (via Camoufox)
+- User Agent + `navigator.platform / oscpu / appVersion`
+- `navigator.language / languages` + Firefox `intl.accept_languages`
+- `navigator.hardwareConcurrency / deviceMemory / maxTouchPoints`
+- `screen.width / height / availWidth / availHeight / colorDepth`
+- `window.devicePixelRatio`
+- `Intl.DateTimeFormat` timezone + `Date.prototype.getTimezoneOffset`
+- WebGL `vendor / renderer` (incl. ANGLE strings on Win/Mac, Mesa on Linux)
+- Canvas / WebGL / Audio noise (binary patches, not JS hooks)
 
-### Anti-Detection Layer (Enhanced Privacy)
-- Canvas `getImageData / toDataURL / toBlob` pixel-level stable-seed noise
-- WebGL `getParameter` (UNMASKED_VENDOR / RENDERER spoofing) + `readPixels` noise
-- AudioBuffer `getChannelData` + AnalyserNode `getFloatFrequencyData` float noise
-- `navigator.userAgentData / plugins / mimeTypes / mediaDevices` neutralized
-- `permissions.query` always returns `prompt`
-- `matchMedia` hover / pointer / any-pointer tracks the touch-device fingerprint
-- `Function.prototype.toString` patched — all hooked functions return `function NAME() { [native code] }`, defeating toString-based detection
-- All hooks are named functions (not anonymous arrows), defeating name-based detection
+### Built-in Presets
+7 OS × browser combinations cover the realistic baseline:
+- macOS 14 Intel, Apple Silicon (en-US, ja-JP)
+- Windows 10, Windows 11 (en-US, en-GB, zh-CN)
+- Linux x86_64 (en-US)
 
-### Privacy Layer
-- Per-profile WebRTC protection (`RTCPeerConnection` etc set to `undefined`, `enumerateDevices` returns empty) — prevents STUN-based real IP leak when enabled
-- Global Privacy Control = true
+Pick one from the dropdown or click **Randomize**.
 
-### Profile Backup / Restore
-- Profile config export / import covers: name, homepage, fingerprint, pinned timezone, enhanced privacy, WebRTC protection, and proxy mapping
-- Cookie export / import remains separate
-- Full `WKWebsiteDataStore` cloning is intentionally not promised because it is not stable across WebKit/macOS versions
+### Proxy
+- Direct, HTTP, SOCKS5
+- Username / password fields are persisted locally; automated proxy-auth
+  injection is not wired in 1.2.0
+- SOCKS5 forces `socks_remote_dns=true` to prevent local DNS leak
+- Per-profile — no shared system proxy
 
-### Proxy Mapping / IP Check
-- Per-profile proxy mapping can be saved as Direct, Follow System, HTTP, or SOCKS5
-- The app can check the configured egress IP, country, and ASN/org with `URLSession`
-- It warns when multiple saved profiles share the same proxy mapping or last detected egress IP
-- WKWebView v1 does **not** guarantee clean per-profile proxy enforcement; use external tools such as `sing-box`, Clash, Surge, VPS SOCKS5, or residential proxies behind local entries like `127.0.0.1:18001`
+### Marionette (optional)
+- Toggle per profile
+- Allocates a unique TCP port from 2828 at launch
+- Compatible with Playwright, Selenium, Marionette-protocol clients
 
-### Browser Basics
-- Multi-tab (aggregated via OS-level windows)
-- History back/forward, refresh, zoom, find
-- Local start page that does not connect automatically, with URL/search input
-- Arbitrary https homepage
-- Built-in fingerprint test page with risk overview (menu → Privacy → Fingerprint Test)
+## Honest Comparison
 
-## Known Limitations / Gap vs. Commercial Products
-
-Stated honestly. For high-adversary scenarios (Fortune 500 anti-fraud, hard Cloudflare Turnstile, enterprise-grade fingerprint.com), current state may not reliably bypass.
-
-- **TLS / JA3 / JA4 fingerprint**: not done. macOS `URLSession` / WKWebView TLS ClientHello is controlled by the kernel — cannot be rewritten in userspace. Commercial products typically use modified Chromium.
-- **HTTP/2 frame order, ALPS, HTTP/3 fingerprint**: not done. Same reason.
-- **WebRTC real-IP leak**: mitigated by disabling the WebRTC API entirely. Not suitable if your workflow requires WebRTC.
-- **`window.outerWidth / outerHeight`**: not rewritten. The real Mac window dimensions remain exposed, which will conflict with `screen.width=393` (iPhone preset). Intentional tradeoff to preserve a usable Mac viewport.
-- **CSS `device-width / orientation` media queries**: partially covered (hover/pointer). Full viewport media queries not rewritten.
-- **Web Worker / iframe isolation context**: iframe values are tested in the built-in fingerprint page. Worker values are also tested; if Worker observable values do not match the main profile, the page explicitly reports "Worker exposure is not controlled."
-- **Per-profile proxy in WKWebView**: v1 stores proxy mappings and can test them with `URLSession`, but it does not claim clean WKWebView per-profile proxy isolation.
-- **macOS 12 / 13**: `WKWebsiteDataStore` doesn't support per-identifier instances. Multiple profiles share the default store — degraded to "fingerprint-only isolation, no cookie isolation". macOS 14+ recommended.
-- **iOS device presets (iPhone / iPad)**: UA + screen swap fine, but `safe-area-inset`, font lists, and some `window.matchMedia` viewport queries will leak. Mac presets are more reliable.
-
-For mid-to-low-adversary scenarios (multiple ordinary SaaS accounts, reducing behavior tracking, preventing cross-site device identification, personal multi-account workflows), the current isolation level is generally sufficient. Do not treat it as a replacement for commercial anti-detect browsers in high-adversary environments.
-
-## Comparison with Commercial Anti-Detect Browsers
-
-| Capability | This project | Multilogin / GoLogin |
+| Capability | This project (v1.2.0) | Multilogin / GoLogin / AdsPower |
 |---|---|---|
 | Multi-profile isolation | yes | yes |
-| Canvas / WebGL / Audio noise | yes | yes |
+| Canvas / WebGL / Audio noise | yes (binary) | yes |
 | UA / screen / timezone spoof | yes | yes |
-| Fingerprint randomization | yes | yes |
-| WebRTC disabled | yes | yes |
-| `toString` detection defense | yes | yes |
-| TLS / JA3 fingerprint | no | yes |
-| HTTP/2 fingerprint | no | yes |
-| Real Chromium engine | no (WKWebView) | yes |
+| TLS / JA3 / JA4 fingerprint | yes (Firefox baseline) | yes (custom Chromium) |
+| HTTP/2 fingerprint | yes (Firefox baseline) | yes |
+| `toString` detection defense | yes (binary, not JS) | yes |
+| Per-profile proxy | yes | yes |
+| Cloud-synced profile vault | no | yes |
+| Hosted profile farm | no | yes |
+| Mobile UA presets (iPhone/iPad) | no (deferred to 1.3) | yes |
 | Price | $0 | from $99/month |
+
+Use this for personal multi-account workflows on a single Mac. Use a
+commercial product if you need cloud sync, team sharing, or 100+ concurrent
+profiles.
+
+## What This Project Does Not Try to Do
+
+- Chromium engine. Camoufox is Firefox-based by design; sites that
+  explicitly require Chrome/WebKit will see a Firefox UA, as expected.
+- Cloud profile vault, team workspaces, browser farm rental.
+- Windows or Linux host builds (the Camoufox binary itself is multi-platform,
+  but this Swift host is macOS-only).
+- iPhone / Android device emulation. Mobile presets ship in v1.3 once
+  the touch-input / orientation story is finalized.
 
 ## Build
 
 ```bash
-swift build -c release
-# Package as .app
-./packaging/make-app.sh
-# Package as DMG
-./packaging/make-dmg.sh
+swift build -c release          # SPM build
+./packaging/make-app.sh         # Bundle as .app
+./packaging/make-dmg.sh         # Build DMG with /Applications symlink
 ```
 
-Requires Xcode Command Line Tools.
+Requirements:
+- macOS 12+
+- Xcode Command Line Tools
+- Apple Silicon (`arm64`). Intel host support arrives in 1.2.x.
 
-## Design Choices
+First launch downloads Camoufox v150 (≈300 MB) once. Cached afterwards.
 
-- **WKWebView instead of a Chromium fork**: single-file Swift, zero dependencies, small binary. Tradeoff: cannot modify TLS fingerprint, cannot modify HTTP/2 frames. Sufficient for personal multi-account use cases.
-- **Local config, no cloud**: UserDefaults + Codable. All data stays on your machine.
-- **Stable-seed fingerprint**: Canvas / WebGL / Audio noise is consistent across reloads for the same profile, avoiding the "fingerprint changes every refresh" anti-tracking signal.
+## Architecture
+
+```
+Sources/MultiProfileFingerprintBrowser/
+├── main.swift                   AppKit entry, switches to SmokeTest on MPFB_SMOKE=1
+├── AppDelegate.swift            NSWindow hosting SwiftUI RootView
+├── Localization.swift           t(en, zh) string helper
+├── Models/
+│   ├── Profile.swift            id, name, fingerprint, proxy, notes
+│   ├── Fingerprint.swift        Camoufox dotted-key value map + JSON encode
+│   └── ProxyConfig.swift        Direct / HTTP / SOCKS5 + Firefox prefs
+├── Managers/
+│   ├── AppPaths.swift           ~/Library/Application Support layout
+│   ├── ProfileStore.swift       Disk-backed CRUD
+│   ├── FingerprintPresets.swift Bundled v150 preset DB
+│   ├── PortAllocator.swift      Marionette port allocation (2828+)
+│   ├── CamoufoxRuntime.swift    Download / SHA256 / extract
+│   └── CamoufoxLauncher.swift   user.js + CAMOU_CONFIG_N + Process.run()
+├── Util/
+│   ├── SHA256.swift             Streaming hasher
+│   ├── Logger.swift             OSLog + stderr
+│   └── ZipExtractor.swift       /usr/bin/unzip wrapper
+├── ViewModels/AppState.swift    @MainActor ObservableObject
+└── Views/                       SwiftUI front-end (RootView, ProfileEditor, …)
+
+Resources/fingerprint-presets-v150.json   Hand-curated 7-entry preset DB
+```
 
 ## Roadmap
 
-- [x] v1.1 timezone strategy and consistency checks
-- [x] v1.1 iframe / Worker diagnostic coverage
-- [x] v1.1 profile config backup / restore
-- [x] v1.1 proxy mapping and egress IP check panel
-- [x] v2 Chromium launcher subproject with independent `user-data-dir`, launch args, proxy mapping, IP check, and local fingerprint test page
-- [ ] HTTP header `Accept-Language` / `Sec-CH-UA` sub-request coverage (not just main request)
-- [ ] Replace v2 launcher layer with embedded CEF once dependency size and packaging are accepted
-- [ ] Fingerprint template import / export (community sharing)
+- [x] 1.2.0 — Camoufox engine, real fingerprint spoofing, per-profile proxy
+- [ ] 1.2.x — Intel Mac (`x86_64`) host support
+- [ ] 1.3 — Mobile presets (iPhone/iPad), Camoufox v151 sync
+- [ ] 1.4 — Profile import/export, fingerprint preset sharing
+- [ ] 1.5 — Headless / Playwright automation recipes
 
 ## License
 
 MIT.
 
-## Related Project
+## Credits
 
-- [chatgpt-web-desktop](https://github.com/GravityPoet/chatgpt-web-desktop) — the upstream project this was split off from, focused on the ChatGPT macOS client.
+- [Camoufox](https://github.com/daijro/camoufox) — the Firefox-patched
+  anti-detect browser this project drives. MPL-2.0.
+- v1.1 (WKWebView) preserved on branch `legacy-wkwebview-cef`.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Multi-Profile Fingerprint Browser"
+APP_NAME="Multi-Profile Anti-Detect Browser"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 DMG_PATH="$ROOT/dist/$APP_NAME.dmg"
 STAGING="$ROOT/dist/dmg-staging"

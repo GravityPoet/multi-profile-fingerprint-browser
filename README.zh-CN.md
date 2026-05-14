@@ -1,135 +1,164 @@
 [English](README.md) | **中文**
 
-# 多账号隔离指纹浏览器 (Multi-Profile Fingerprint Browser)
+# 多账号反检测浏览器
 
-一个 macOS 上免费、开源的 Safari/WebKit 家族一致性隐私指纹浏览器。每个账号空间一套独立的 Cookie / 存储 / 稳定 Safari 设备指纹，目标是减少跨账号、跨站点的指纹关联。
+免费、开源、macOS 原生的多账号反检测浏览器。每个 Profile 都会启动一个完全隔离的 Camoufox（Firefox patched）实例，拥有独立指纹、代理、Cookie 与本地存储。目标是给个人多账号工作流提供一个零订阅的 Multilogin / GoLogin / AdsPower 替代方案。
 
-它不是“真 anti-detect 浏览器”，也不能补齐 TLS / HTTP/2 / Chromium 内核级指纹。它的定位是本地、零订阅、低异常的多账号隐私浏览器：只伪装成不同 Safari/WebKit 设备，不假装 Chrome / Firefox。
+`v1.2.0` 是一次完整重写。旧的 WKWebView 隐私壳版本保留在 `legacy-wkwebview-cef` 分支。
 
-## 现状
+## 1.2.0 变化
 
-- macOS 12+，Swift + WKWebView 单文件实现，约 4500 行
-- `v0.1.0` 已作为稳定 WKWebView 基线保留
-- 当前线是 `v1.1`：Safari/WebKit 隐私增强版，重点是稳定、好用、诚实、低异常
-- 仅 macOS，暂无 Windows / Linux 计划
-
-## 版本线
-
-- **v1：Safari/WebKit 隐私隔离版** — 当前仓库。做 Safari/WebKit 家族低异常多空间隔离，不收订阅费，也不声称能补 Chromium/TLS 级指纹。
-- **v2：Chromium/CEF 实验版** — 已作为独立 [`chromium-v2`](chromium-v2/README.zh-CN.md) 子项目落地。这条线负责更干净的 per-profile proxy 和 Chromium user-data 隔离。
-
-## 核心能力
-
-### 账号空间隔离
-- 多 Profile，各自独立 Cookie / localStorage / IndexedDB / 缓存（macOS 14+ 用 `WKWebsiteDataStore(forIdentifier:)`，macOS 12-13 共享默认 Store）
-- 每个 Profile 可设独立首页
-- Cookie JSON 导入 / 导出
-- 一键清空当前账号空间全部数据
-
-### 指纹层
-- 5 个内置预设：MacBook Air 13, MacBook Pro 14, iMac 5K, iPad 13, iPhone 15 Pro
-- 一键随机化默认生成 Mac Safari 稳定指纹；iPhone/iPad 作为显式预设保留，因为大 Mac 窗口下移动预设风险更高
-- Per-Profile 指纹独立持久化
-- 每个 Profile 固定时区，按主语言解析（例如 `en-US` 映射美国时区，`zh-CN` 映射 `Asia/Shanghai`）
-- 一致性检查覆盖 UA 家族、语言/时区、屏幕尺寸、触控能力和移动预设窗口风险
-- 覆盖：UserAgent、`navigator.platform/language/languages/hardwareConcurrency/deviceMemory/maxTouchPoints`、`screen.*`、`devicePixelRatio`、`Intl.DateTimeFormat` 时区、`Date.prototype.getTimezoneOffset`、`screen.orientation`
-
-### 抗检测层（增强隐私）
-- Canvas `getImageData / toDataURL / toBlob` 像素级 stable-seed 噪声
-- WebGL `getParameter`（UNMASKED_VENDOR / RENDERER 伪装）+ `readPixels` 噪声
-- AudioBuffer `getChannelData` + AnalyserNode `getFloatFrequencyData` 浮点噪声
-- `navigator.userAgentData / plugins / mimeTypes / mediaDevices` 中和
-- `permissions.query` 永远返回 `prompt`
-- `matchMedia` hover / pointer / any-pointer 跟随触屏指纹
-- `Function.prototype.toString` 修补：所有 hook 函数返回 `function NAME() { [native code] }` 标准格式，过 toString 检测
-- 全部 hook 命名化（不是匿名箭头），过名字检测
-
-### 隐私层
-- 每个 Profile 独立 WebRTC 防护（开启时 `RTCPeerConnection` 等设为 `undefined`，`enumerateDevices` 返回空），防 STUN 真实 IP 泄露
-- Global Privacy Control = true
-
-### Profile 备份 / 恢复
-- Profile 配置导出 / 导入覆盖：名称、首页、指纹、固定时区、增强隐私、WebRTC 防护和代理映射
-- Cookie 继续单独导入 / 导出
-- 不承诺完整克隆 `WKWebsiteDataStore`，因为它跨 WebKit/macOS 版本不够稳定
-
-### 代理映射 / 出口 IP 检测
-- 每个 Profile 可保存代理映射：直连、跟随系统、HTTP、SOCKS5
-- App 可用 `URLSession` 检测该配置的出口 IP、国家和 ASN/组织
-- 多个 Profile 使用相同代理映射或上次检测到相同出口 IP 时会提示风险
-- WKWebView v1 **不保证**干净的 per-profile proxy 强制接管；建议把 `127.0.0.1:18001` 这类本地入口背后接到 `sing-box`、Clash、Surge、VPS SOCKS5 或住宅代理
-
-### 浏览器基础
-- 多标签（OS 级窗口聚合）
-- 历史前进后退、刷新、缩放、查找
-- 本地起始页，不自动联网，可输入网址或搜索
-- 任意 https 首页
-- 内置指纹检测页 + 风险概览（菜单栏 → 隐私 → 指纹检测）
-
-## 已知限制 / 与商业产品差距
-
-诚实写出来。如果是高对抗场景（Fortune 500 反欺诈、Cloudflare 高难度 Turnstile、专业指纹库 fingerprint.com 企业版），现状不一定能稳过。
-
-- **TLS / JA3 / JA4 指纹**：未做。系统 `URLSession` / WKWebView 的 TLS ClientHello 由 macOS 内核决定，无法在用户态改写。商业产品多用魔改 Chromium。
-- **HTTP/2 帧顺序、ALPS、HTTP/3 指纹**：未做。同上。
-- **WebRTC 真 IP 泄露**：通过禁用 WebRTC API 来防。如果业务必须 WebRTC，本工具不适合。
-- **`window.outerWidth / outerHeight`**：未改写。Mac 窗口真实尺寸暴露。和 `screen.width=393`（iPhone 预设）会有矛盾。这是为了保留可用的 Mac 窗口尺寸做的取舍。
-- **CSS `device-width / orientation` media query**：部分覆盖（hover/pointer），完整尺寸 media 未改写。
-- **Web Worker / iframe 隔离上下文**：内置指纹检测页会检测 iframe 值。Worker 也会检测；如果 Worker 可观察值与主页面指纹不一致，会明确显示“Worker 暴露不可控”。
-- **WKWebView per-profile proxy**：v1 只保存代理映射，并可用 `URLSession` 检测该配置；不声称 WKWebView 已被干净地 per-profile 强制代理。
-- **macOS 12 / 13**：`WKWebsiteDataStore` 不支持 per-identifier，多 Profile 共享默认 Store 退化为"只有指纹区分，不隔离 Cookie"。建议 macOS 14+。
-- **iOS 设备预设（iPhone / iPad）**：UA + screen 可换，但 safe-area-inset、字体列表、`window.matchMedia` 的部分 viewport 查询会穿帮。Mac 预设更稳。
-
-如果你做的是中低对抗场景（多个普通 SaaS 账号、减少站点行为追踪、防止跨站设备识别、个人多账号工作流），现状的隔离强度通常够用。高强度风控场景不要把它当成商业 anti-detect 浏览器替代品。
-
-## 与商业 anti-detect 浏览器的对比
-
-| 能力 | 本项目 | Multilogin/GoLogin |
+| | v1.1 (WKWebView) | v1.2.0 (Camoufox) |
 |---|---|---|
-| 多 Profile 隔离 | ✅ | ✅ |
-| Canvas/WebGL/Audio 噪声 | ✅ | ✅ |
-| UA / 屏幕 / 时区伪装 | ✅ | ✅ |
-| 指纹随机化 | ✅ | ✅ |
-| WebRTC 关闭 | ✅ | ✅ |
-| `toString` 检测防御 | ✅ | ✅ |
-| TLS / JA3 指纹 | ❌ | ✅ |
-| HTTP/2 fingerprint | ❌ | ✅ |
-| 真 Chromium 内核 | ❌ (WKWebView) | ✅ |
+| 浏览器内核 | macOS WKWebView | Camoufox v150 (Firefox patched) |
+| TLS / JA3 / JA4 指纹 | 不修改 | 继承 Firefox + NSS |
+| HTTP/2 帧顺序 / ALPS | 不修改 | 继承 Firefox |
+| Canvas / WebGL / Audio 噪声 | JS hook | Camoufox C++ patch |
+| `navigator.*` 伪装 | JS hook，可被 toString 检测 | 二进制层，非 JS hook |
+| Per-profile proxy | best-effort | Firefox `network.proxy.*` prefs |
+| UA → 屏幕 → 时区一致性 | 仅 mac/iOS 家族 | 内置 v150 预设库 |
+
+这是第一个可以在中等对抗场景下接近商业 anti-detect browser 使用方式的版本。
+
+## 工作方式
+
+1. 首次使用时，App 会下载 Camoufox v150（约 300 MB）到：
+   `~/Library/Application Support/MultiProfileFingerprintBrowser/runtime/`
+   下载包会做 SHA256 校验。
+2. 每个 Profile 以 `profiles/<uuid>/meta.json` 持久化。
+3. 点击 **Launch** 时，App 会：
+   - 写入 per-profile Firefox `user.js`，包括代理、语言和 Marionette 设置。
+   - 把指纹 JSON 编码并切成 `CAMOU_CONFIG_1..N` 环境变量。
+   - 使用 `--profile <dir> --no-remote --new-instance` 启动 Camoufox。
+4. Camoufox 启动时读取环境变量，在 C++ 层应用指纹，并把所有运行数据写入独立 profile 目录。
+
+Swift 壳应用不在网页运行时注入 JS hook；真正的伪装逻辑都在 patched browser binary 内完成。
+
+## 功能
+
+### Profile 隔离
+
+- 每个 Profile 独立 Firefox profile 目录：`firefox-profile/`
+- 独立 Cookie、localStorage、IndexedDB、缓存、历史记录
+- Firefox 兼容书签与扩展随 profile 隔离
+- 多个 Profile 可同时打开多个独立窗口
+
+### 指纹伪装（Camoufox）
+
+- User Agent + `navigator.platform / oscpu / appVersion`
+- `navigator.language / languages` + Firefox `intl.accept_languages`
+- `navigator.hardwareConcurrency / deviceMemory / maxTouchPoints`
+- `screen.width / height / availWidth / availHeight / colorDepth`
+- `window.devicePixelRatio`
+- `Intl.DateTimeFormat` timezone + `Date.prototype.getTimezoneOffset`
+- WebGL `vendor / renderer`
+- Canvas / WebGL / Audio 噪声（二进制 patch，不是 JS hook）
+
+### 内置预设
+
+内置 7 组 OS × browser 组合：
+
+- macOS 14 Intel / Apple Silicon（en-US、ja-JP）
+- Windows 10 / Windows 11（en-US、en-GB、zh-CN）
+- Linux x86_64（en-US）
+
+可以从下拉框选择，也可以点击 **Randomize** 随机抽取。
+
+### 代理
+
+- Direct、HTTP、SOCKS5
+- Per-profile Firefox 代理 prefs，不依赖系统代理
+- SOCKS5 强制 `network.proxy.socks_remote_dns=true`，避免本机 DNS 泄露
+- 1.2.0 会保存用户名/密码字段，但还没有自动注入代理认证；需要代理侧免认证或由 Firefox 交互处理认证
+
+### Marionette
+
+- 每个 Profile 可单独开启
+- 端口从 2828 起自动分配，避免冲突
+- 给 Phase 2/后续自动化接 Playwright、Selenium 或 Marionette 协议使用
+
+## 与商业产品的诚实对比
+
+| 能力 | 本项目 v1.2.0 | Multilogin / GoLogin / AdsPower |
+|---|---|---|
+| 多 Profile 隔离 | 是 | 是 |
+| Canvas / WebGL / Audio 噪声 | 是（二进制层） | 是 |
+| UA / 屏幕 / 时区伪装 | 是 | 是 |
+| TLS / JA3 / JA4 指纹 | Firefox baseline | 定制 Chromium |
+| HTTP/2 fingerprint | Firefox baseline | 是 |
+| `toString` 检测防御 | 是（二进制层，非 JS hook） | 是 |
+| Per-profile proxy | 是 | 是 |
+| 云端 Profile 仓库 | 否 | 是 |
+| 团队协作 / 批量农场 | 否 | 是 |
+| iPhone / iPad 移动预设 | 否，延后到 1.3 | 是 |
 | 价格 | 0 元 | $99/月起 |
+
+适合单机 Mac 上的个人多账号工作流。如果你需要云同步、团队协作、托管浏览器农场或 100+ 并发 profile，仍然应该用商业产品。
+
+## 本项目不做什么
+
+- 不做 Chromium 内核。Camoufox 是 Firefox-based；需要 Chrome/WebKit-only 的网站会看到 Firefox UA，这是设计选择。
+- 不做云端 profile vault、团队空间、浏览器农场租用。
+- 目前不做 Windows / Linux host app。Camoufox 本身跨平台，但这个 Swift 壳只支持 macOS。
+- 1.2.0 不做 iPhone / Android 设备模拟。移动预设会等触控输入、方向和 viewport 一致性收束后进入 1.3。
 
 ## 构建
 
 ```bash
-swift build -c release
-# 或打包成 .app
-./packaging/make-app.sh
-# 打包 DMG
-./packaging/make-dmg.sh
+swift build -c release          # SPM 构建
+./packaging/make-app.sh         # 打包 .app
+./packaging/make-dmg.sh         # 生成带 /Applications 链接的 DMG
 ```
 
-需要 Xcode Command Line Tools。
+要求：
 
-## 设计选择
+- macOS 12+
+- Xcode Command Line Tools
+- Apple Silicon (`arm64`)；Intel Mac host support 进入 1.2.x
 
-- **WKWebView 而不是 Chromium 内核**：单文件 Swift、零依赖、二进制小。代价：无法改 TLS 指纹、无法改 HTTP/2 帧。对个人多账号场景够用。
-- **本地配置，无云端**：UserDefaults + Codable，所有数据在你的机器上。
-- **指纹基于 stable seed**：同 Profile 多次启动 Canvas/WebGL/Audio 噪声一致，避免"每次刷新指纹都变"的反追踪信号。
+首次启动会下载一次 Camoufox v150（约 300 MB），之后复用本地缓存。
+
+## 架构
+
+```
+Sources/MultiProfileFingerprintBrowser/
+├── main.swift                   AppKit 入口，MPFB_SMOKE=1 时切到 SmokeTest
+├── AppDelegate.swift            NSWindow + SwiftUI RootView
+├── Localization.swift           中英文字符串 helper
+├── Models/
+│   ├── Profile.swift            id、name、fingerprint、proxy、notes
+│   ├── Fingerprint.swift        Camoufox dotted-key map + JSON encode
+│   └── ProxyConfig.swift        Direct / HTTP / SOCKS5 + Firefox prefs
+├── Managers/
+│   ├── AppPaths.swift           ~/Library/Application Support 布局
+│   ├── ProfileStore.swift       磁盘 CRUD
+│   ├── FingerprintPresets.swift 内置 v150 预设库
+│   ├── PortAllocator.swift      Marionette 端口分配（2828+）
+│   ├── CamoufoxRuntime.swift    下载 / SHA256 / 解压
+│   └── CamoufoxLauncher.swift   user.js + CAMOU_CONFIG_N + Process.run()
+├── Util/
+│   ├── SHA256.swift             流式 SHA256
+│   ├── Logger.swift             OSLog + stderr
+│   └── ZipExtractor.swift       /usr/bin/unzip wrapper
+├── ViewModels/AppState.swift    @MainActor ObservableObject
+└── Views/                       SwiftUI 前端
+
+Resources/fingerprint-presets-v150.json   7 组手工策划预设
+```
 
 ## 路线图
 
-- [x] v1.1 时区策略和一致性检查
-- [x] v1.1 iframe / Worker 检测覆盖
-- [x] v1.1 Profile 配置备份 / 恢复
-- [x] v1.1 代理映射与出口 IP 检测面板
-- [x] v2 Chromium launcher 子项目：独立 `user-data-dir`、启动参数、代理映射、IP 检测和本地指纹检测页
-- [ ] HTTP 头 `Accept-Language` / `Sec-CH-UA` 子请求覆盖（不只主请求）
-- [ ] 等依赖体积和打包方案接受后，把 v2 launcher 层替换成嵌入式 CEF
-- [ ] 指纹模板导入导出（社区共享）
+- [x] 1.2.0 — Camoufox engine、真实指纹伪装、per-profile proxy
+- [ ] 1.2.x — Intel Mac (`x86_64`) host support
+- [ ] 1.3 — 移动预设（iPhone/iPad）、Camoufox v151 sync
+- [ ] 1.4 — Profile 导入/导出、指纹预设分享
+- [ ] 1.5 — Headless / Playwright 自动化示例
 
 ## License
 
 MIT。
 
-## 关联项目
+## Credits
 
-- [chatgpt-web-desktop](https://github.com/GravityPoet/chatgpt-web-desktop) — 本项目的前身，专注 ChatGPT macOS 客户端。该项目把指纹浏览器部分拆出来独立维护。
+- [Camoufox](https://github.com/daijro/camoufox) — 本项目驱动的 Firefox patched anti-detect browser，MPL-2.0。
+- v1.1 (WKWebView) 已保留在 `legacy-wkwebview-cef` 分支。

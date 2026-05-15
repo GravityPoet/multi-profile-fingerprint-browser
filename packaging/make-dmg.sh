@@ -7,6 +7,11 @@ APP_DIR="$ROOT/dist/$APP_NAME.app"
 DMG_PATH="$ROOT/dist/$APP_NAME.dmg"
 STAGING="$ROOT/dist/dmg-staging"
 
+cleanup() {
+  rm -rf "$STAGING"
+}
+trap cleanup EXIT
+
 "$ROOT/packaging/make-app.sh" >/dev/null
 
 rm -rf "$STAGING" "$DMG_PATH"

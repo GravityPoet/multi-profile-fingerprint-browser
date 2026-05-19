@@ -8,6 +8,7 @@ import Foundation
 final class AppState: ObservableObject {
     @Published private(set) var profiles: [Profile] = []
     @Published private(set) var runningProfileIDs: Set<UUID> = []
+    @Published private(set) var runningProfilesByID: [UUID: RunningProfileInfo] = [:]
     @Published private(set) var runtimeStatus: CamoufoxRuntimeStatus = .notReady
     @Published var lastErrorMessage: String?
 
@@ -92,6 +93,10 @@ final class AppState: ObservableObject {
         launcher.terminate(profileID: id)
     }
 
+    func runningInfo(for id: UUID) -> RunningProfileInfo? {
+        runningProfilesByID[id]
+    }
+
     // MARK: Runtime
 
     func ensureRuntimeReadyInBackground() {
@@ -110,10 +115,17 @@ final class AppState: ObservableObject {
     // MARK: Helpers
 
     private func refreshRunning() {
-        let ids = launcher.running
-            .filter { $0.isRunning }
-            .map { $0.profileID }
-        runningProfileIDs = Set(ids)
+        var snapshots: [UUID: RunningProfileInfo] = [:]
+        for launched in launcher.running where launched.isRunning {
+            snapshots[launched.profileID] = RunningProfileInfo(
+                id: launched.profileID,
+                processID: launched.process.processIdentifier,
+                startedAt: launched.startedAt,
+                marionettePort: launched.marionettePort
+            )
+        }
+        runningProfilesByID = snapshots
+        runningProfileIDs = Set(snapshots.keys)
     }
 
     private func runStoreOperation(_ op: () throws -> Void) {

@@ -15,6 +15,7 @@ enum SmokeTest {
             try chunkConfigCheck()
             let profiles = try createProfiles()
             try launchAndTerminate(profiles: profiles)
+            try marionetteLaunchCheck()
         } catch {
             AppLogger.error("SmokeTest FAILED: \(error.localizedDescription)")
             exit(1)
@@ -132,5 +133,73 @@ enum SmokeTest {
             }
             AppLogger.info("[ok] terminated \(profile.name) status=\(launched.process.terminationStatus)")
         }
+    }
+
+    private static func marionetteLaunchCheck() throws {
+        AppLogger.info("[step] marionette launch check")
+        guard let preset = FingerprintPresets.shared.all.first else {
+            throw NSError(
+                domain: "Smoke",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "need one preset for marionette check"]
+            )
+        }
+
+        let name = "smoke-marionette-\(preset.id)"
+        if let existing = ProfileStore.shared.list().first(where: { $0.name == name }) {
+            try ProfileStore.shared.delete(id: existing.id)
+        }
+
+        let profile = try ProfileStore.shared.save(Profile(
+            name: name,
+            fingerprint: preset.fingerprint(),
+            proxy: .direct,
+            notes: "Phase automation smoke",
+            marionetteEnabled: true,
+            presetID: preset.id
+        ))
+
+        let launched = try CamoufoxLauncher.shared.launch(profile)
+        defer {
+            CamoufoxLauncher.shared.terminate(profileID: profile.id)
+        }
+
+        guard let port = launched.marionettePort else {
+            throw NSError(
+                domain: "Smoke",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "marionette port was not allocated"]
+            )
+        }
+
+        Thread.sleep(forTimeInterval: 2.0)
+
+        let userJS = AppPaths.userJSURL(for: profile)
+        let body = try String(contentsOf: userJS, encoding: .utf8)
+        guard body.contains("user_pref(\"marionette.enabled\", true);"),
+              body.contains("user_pref(\"marionette.port\", \(port));") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 9,
+                userInfo: [NSLocalizedDescriptionKey: "marionette prefs missing from user.js"]
+            )
+        }
+
+        let snapshot = RunningProfileInfo(
+            id: launched.profileID,
+            processID: launched.process.processIdentifier,
+            startedAt: launched.startedAt,
+            marionettePort: port
+        )
+        let env = snapshot.automationEnvironment(for: profile)
+        guard env["MPFB_MARIONETTE_ENDPOINT"] == "127.0.0.1:\(port)" else {
+            throw NSError(
+                domain: "Smoke",
+                code: 10,
+                userInfo: [NSLocalizedDescriptionKey: "automation env endpoint mismatch"]
+            )
+        }
+
+        AppLogger.info("[ok] marionette endpoint 127.0.0.1:\(port)")
     }
 }

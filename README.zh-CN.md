@@ -76,6 +76,10 @@ Swift 壳应用不在网页运行时注入 JS hook；真正的伪装逻辑都在
 - 每个 Profile 可单独开启
 - 端口从 2828 起自动分配，避免冲突
 - 给 Phase 2/后续自动化接 Playwright、Selenium 或 Marionette 协议使用
+- 运行中的 Profile 详情页可以复制 endpoint 和 shell-ready 脚本环境变量
+
+当前 Selenium / Marionette 用法和后续脚本 Runner 计划见
+[Automation Mode](docs/automation-mode.md)。
 
 ## 与商业产品的诚实对比
 
@@ -152,7 +156,7 @@ Resources/fingerprint-presets-v150.json   7 组手工策划预设
 - [ ] 1.2.x — Intel Mac (`x86_64`) host support
 - [ ] 1.3 — 移动预设（iPhone/iPad）、Camoufox v151 sync
 - [ ] 1.4 — Profile 导入/导出、指纹预设分享
-- [ ] 1.5 — Headless / Playwright 自动化示例
+- [ ] 1.5 — 脚本 Runner、自动化锁、可选 Chromium/CDP engine
 
 ## License
 

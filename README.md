@@ -81,6 +81,11 @@ Pick one from the dropdown or click **Randomize**.
 - Toggle per profile
 - Allocates a unique TCP port from 2828 at launch
 - Compatible with Playwright, Selenium, Marionette-protocol clients
+- The running profile detail pane can copy the endpoint and shell-ready script
+  environment for local automation.
+
+See [Automation Mode](docs/automation-mode.md) for the current Selenium /
+Marionette workflow and the planned script runner.
 
 ## Honest Comparison
 
@@ -161,7 +166,7 @@ Resources/fingerprint-presets-v150.json   Hand-curated 7-entry preset DB
 - [ ] 1.2.x — Intel Mac (`x86_64`) host support
 - [ ] 1.3 — Mobile presets (iPhone/iPad), Camoufox v151 sync
 - [ ] 1.4 — Profile import/export, fingerprint preset sharing
-- [ ] 1.5 — Headless / Playwright automation recipes
+- [ ] 1.5 — Script runner, automation locks, optional Chromium/CDP engine
 
 ## License
 

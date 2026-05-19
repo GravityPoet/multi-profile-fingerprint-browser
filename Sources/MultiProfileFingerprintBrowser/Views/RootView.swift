@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootView: View {
@@ -152,6 +153,8 @@ struct RootView: View {
                     Divider()
                     metaSection(for: profile)
                     Divider()
+                    automationSection(for: profile)
+                    Divider()
                     FingerprintInspectorView(fingerprint: profile.fingerprint)
                 }
                 .padding(20)
@@ -219,6 +222,50 @@ struct RootView: View {
         }
     }
 
+    private func automationSection(for profile: Profile) -> some View {
+        let runningInfo = state.runningInfo(for: profile.id)
+        let endpoint = runningInfo?.marionetteEndpoint
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(Localization.t("Automation", "自动化"))
+                    .font(.headline)
+                Spacer()
+                if let endpoint = endpoint {
+                    Label(endpoint, systemImage: "terminal")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
+
+            Text(automationStatusText(profile: profile, runningInfo: runningInfo))
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button {
+                    if let endpoint = endpoint {
+                        copyToClipboard(endpoint)
+                    }
+                } label: {
+                    Label(Localization.t("Copy endpoint", "复制端点"), systemImage: "link")
+                }
+                .disabled(endpoint == nil)
+
+                Button {
+                    if let text = automationEnvironmentText(for: profile, runningInfo: runningInfo) {
+                        copyToClipboard(text)
+                    }
+                } label: {
+                    Label(Localization.t("Copy script env", "复制脚本环境"), systemImage: "doc.on.clipboard")
+                }
+                .disabled(runningInfo == nil)
+            }
+            .controlSize(.small)
+        }
+    }
+
     private func metaRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
@@ -269,6 +316,55 @@ struct RootView: View {
     private func defaultName() -> String {
         let n = state.profiles.count + 1
         return Localization.t("Profile \(n)", "配置 \(n)")
+    }
+
+    private func automationStatusText(
+        profile: Profile,
+        runningInfo: RunningProfileInfo?
+    ) -> String {
+        if !profile.marionetteEnabled {
+            return Localization.t(
+                "Enable Marionette in the profile editor, then launch this profile to expose a local automation endpoint.",
+                "在配置编辑器里启用 Marionette，然后启动该 Profile，即可暴露本地自动化端点。"
+            )
+        }
+        guard let runningInfo = runningInfo else {
+            return Localization.t(
+                "Marionette is enabled. Launch this profile to allocate an endpoint for Selenium/geckodriver or Marionette clients.",
+                "Marionette 已启用。启动该 Profile 后，会为 Selenium/geckodriver 或 Marionette 客户端分配端点。"
+            )
+        }
+        if runningInfo.marionetteEndpoint != nil {
+            return Localization.t(
+                "This running profile can be controlled by local automation. Keep the window visible so failed scripts can be inspected and continued manually.",
+                "该运行中的 Profile 可被本地自动化控制。保持窗口可见，脚本失败后可人工检查并继续。"
+            )
+        }
+        return Localization.t(
+            "This profile is running, but no automation port was allocated. Stop it, enable Marionette, and launch again.",
+            "该 Profile 正在运行，但未分配自动化端口。停止后启用 Marionette，再重新启动。"
+        )
+    }
+
+    private func automationEnvironmentText(
+        for profile: Profile,
+        runningInfo: RunningProfileInfo?
+    ) -> String? {
+        guard let runningInfo = runningInfo else { return nil }
+        return runningInfo
+            .automationEnvironment(for: profile)
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\(shellEscaped($0.value))" }
+            .joined(separator: "\n")
+    }
+
+    private func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func shellEscaped(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 

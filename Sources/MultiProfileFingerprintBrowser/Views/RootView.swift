@@ -320,6 +320,12 @@ struct RootView: View {
                         Label(Localization.t("Reveal logs", "打开日志"), systemImage: "folder")
                     }
                     .disabled(lastRun == nil)
+
+                    Button {
+                        openExamplesFolder()
+                    } label: {
+                        Label(Localization.t("Examples", "示例"), systemImage: "book")
+                    }
                 }
                 .controlSize(.small)
 
@@ -418,6 +424,25 @@ struct RootView: View {
               let run = scriptRunner.currentOrLastRun(for: profileID) else { return }
         let logDir = URL(fileURLWithPath: run.stdoutLogPath).deletingLastPathComponent()
         NSWorkspace.shared.open(logDir)
+    }
+
+    private func openExamplesFolder() {
+        // Look for examples/automation relative to the app bundle or repo root.
+        let bundleURL = Bundle.main.bundleURL
+        let candidates = [
+            bundleURL.deletingLastPathComponent().appendingPathComponent("examples/automation"),
+            bundleURL.appendingPathComponent("examples/automation"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("examples/automation"),
+        ]
+        for url in candidates {
+            if FileManager.default.fileExists(atPath: url.path) {
+                NSWorkspace.shared.open(url)
+                return
+            }
+        }
+        // Fallback: open the repo root and let the user navigate.
+        let repoRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        NSWorkspace.shared.open(repoRoot)
     }
 
     private func metaRow(_ label: String, _ value: String) -> some View {

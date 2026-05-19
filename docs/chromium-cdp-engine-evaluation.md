@@ -11,51 +11,61 @@ engine alongside the current Camoufox (Firefox) engine.
 
 ## CloakBrowser Analysis
 
-### What CloakBrowser Provides
+### What CloakBrowser Is
 
-CloakBrowser is a commercial anti-detect browser built on Chromium. Its
-key capabilities:
+CloakBrowser is a **free, open-source (MIT)** stealth Chromium binary with
+42 source-level C++ patches. It is a drop-in Playwright/Puppeteer
+replacement — same API, just swap the import.
 
-- Multiple browser profiles with isolated fingerprints
-- Chromium-based rendering (sites see Chrome, not Firefox)
-- Per-profile proxy configuration
-- Cookie/session persistence per profile
-- Team collaboration features (cloud sync)
+Key characteristics:
 
-### CloakBrowser-Manager
+- **Stealth Chromium binary** with fingerprints modified at C++ source level
+  (canvas, WebGL, audio, fonts, GPU, screen, automation signals, etc.)
+- **42 source-level patches** compiled into the binary, not JavaScript injection
+- **Auto-downloads** the binary on first use (`pip install cloakbrowser`)
+- **0.9 reCAPTCHA v3 score**, passes Cloudflare Turnstile, FingerprintJS
+- **`humanize=True`** flag for human-like mouse/keyboard/scroll behavior
 
-An open-source companion tool that provides:
+### CloakBrowser-Manager (Separate Project)
 
-- Profile management API
-- Browser launch orchestration
-- Import/export of profiles
+A **companion project** (Docker-based) providing:
+
+- Web GUI for managing browser profiles (similar to Multilogin/GoLogin)
+- Docker Hub image with noVNC for visual inspection
+- Profile persistence and isolation
+
+This is a separate tool, not part of the core CloakBrowser package.
 
 ### Binary Distribution Risk
 
-CloakBrowser ships its own patched Chromium binary. Key concerns:
+CloakBrowser ships a custom Chromium binary (~200-400 MB). Key concerns:
 
-1. **License**: Chromium is BSD-licensed, but patches may include
-   proprietary code. Redistribution rights unclear.
-2. **Binary size**: ~200-400 MB per platform per version.
-3. **Update burden**: Security patches require rebuilding.
-4. **Trust**: Users must trust the binary hasn't been tampered with.
+1. **License**: CloakBrowser itself is MIT, but the Chromium patches may
+   include proprietary fingerprint spoofing. Redistribution rights need
+   verification.
+2. **Binary trust**: Users must trust the pre-built binary hasn't been
+   tampered with. No reproducible build process documented.
+3. **Update burden**: Binary auto-updates, but bundling means we'd need
+   to track upstream releases.
+4. **Size**: ~200-400 MB per platform per version.
 
 ## Three Approaches
 
 ### A: Adopt (Bundle CloakBrowser Binary)
 
 **Pros**:
-- Immediate Chromium fingerprint spoofing
-- Battle-tested anti-detect features
+- Immediate Chromium fingerprint spoofing (42 source-level patches)
+- MIT-licensed, free to use
+- Drop-in Playwright/Puppeteer replacement
 
 **Cons**:
-- License/redistribution risk
-- Binary trust problem
-- Update maintenance burden
-- Bloats app size significantly
-- Users can't verify what's running
+- Redistribution rights for the patched Chromium binary unclear
+- Binary trust problem (no reproducible build)
+- ~200-400 MB per platform
+- Auto-update mechanism may conflict with bundling
 
-**Verdict**: Not recommended for v1.x. License and trust issues unresolved.
+**Verdict**: Promising, but redistribution and trust issues need resolution
+before bundling. Could work as optional download.
 
 ### B: Wrap (User-Provided CDP Browser)
 
@@ -159,6 +169,6 @@ No data migration needed — field is optional with sensible default.
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2026-05-19 | Short-term: no Chromium binary | License unresolved, team size insufficient |
-| 2026-05-19 | Medium-term: user-provided CDP | Best capability/complexity ratio |
-| 2026-05-19 | Long-term: own patches deferred | Needs dedicated Chromium team |
+| 2026-05-19 | Short-term: no Chromium binary | Redistribution rights unverified, trust model unclear |
+| 2026-05-19 | Medium-term: user-provided CDP or optional CloakBrowser download | Best capability/complexity ratio |
+| 2026-05-19 | Long-term: evaluate bundling CloakBrowser | Needs redistribution verification, reproducible build |

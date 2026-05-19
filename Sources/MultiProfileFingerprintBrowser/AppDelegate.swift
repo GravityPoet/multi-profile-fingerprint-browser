@@ -36,5 +36,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for launched in CamoufoxLauncher.shared.running {
             CamoufoxLauncher.shared.terminate(profileID: launched.profileID)
         }
+        // Brief wait for subprocesses to exit cleanly.
+        // Avoids leaving zombie processes on fast quit.
+        for _ in 0..<10 {
+            let hasRunning = CamoufoxLauncher.shared.running.contains { $0.isRunning }
+            if !hasRunning { break }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
     }
 }

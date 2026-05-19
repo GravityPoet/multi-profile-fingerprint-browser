@@ -44,6 +44,16 @@ else
   echo "warning: lproj sources not found at $LPROJ_SOURCE" >&2
 fi
 
+# Copy automation examples into the bundle so the "Examples" button works
+# from the installed .app, not just from the source checkout.
+EXAMPLES_SOURCE="$ROOT/examples/automation"
+if [[ -d "$EXAMPLES_SOURCE" ]]; then
+  mkdir -p "$RESOURCES/examples"
+  cp -R "$EXAMPLES_SOURCE" "$RESOURCES/examples/"
+else
+  echo "warning: examples not found at $EXAMPLES_SOURCE" >&2
+fi
+
 chmod +x "$MACOS/$BINARY_NAME"
 
 /usr/bin/codesign --force --deep --sign - "$APP_DIR"

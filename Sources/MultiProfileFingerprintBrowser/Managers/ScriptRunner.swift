@@ -119,17 +119,22 @@ final class ScriptRunner: ObservableObject {
             }
         }
 
+        // Register BEFORE process.run() so the termination handler can
+        // always find the run, even if the script exits instantly.
+        run.markRunning()
+        activeRuns[profileID] = run
+        processes[profileID] = process
+
         do {
             try process.run()
         } catch {
+            // Launch failed — undo the registration.
+            activeRuns.removeValue(forKey: profileID)
+            processes.removeValue(forKey: profileID)
             stdoutHandle.closeFile()
             stderrHandle.closeFile()
             throw ScriptRunnerError.launchFailed(underlying: error)
         }
-
-        run.markRunning()
-        activeRuns[profileID] = run
-        processes[profileID] = process
 
         AppLogger.info("Script run \(runID) started for profile \(profileID) script=\(scriptPath)")
         return run

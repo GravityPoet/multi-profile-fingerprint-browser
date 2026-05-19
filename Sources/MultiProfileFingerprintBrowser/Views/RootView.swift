@@ -427,22 +427,23 @@ struct RootView: View {
     }
 
     private func openExamplesFolder() {
-        // Look for examples/automation relative to the app bundle or repo root.
-        let bundleURL = Bundle.main.bundleURL
-        let candidates = [
-            bundleURL.deletingLastPathComponent().appendingPathComponent("examples/automation"),
-            bundleURL.appendingPathComponent("examples/automation"),
-            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("examples/automation"),
-        ]
+        // Priority: Bundle Resources/examples/automation (installed app),
+        // then repo-relative paths (development).
+        let candidates: [URL] = [
+            Bundle.main.resourceURL.map { $0.appendingPathComponent("examples/automation") },
+            Bundle.main.resourceURL.map { $0.appendingPathComponent("examples") },
+            Bundle.main.bundleURL.deletingLastPathComponent()
+                .appendingPathComponent("examples/automation"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("examples/automation"),
+        ].compactMap { $0 }
+
         for url in candidates {
             if FileManager.default.fileExists(atPath: url.path) {
                 NSWorkspace.shared.open(url)
                 return
             }
         }
-        // Fallback: open the repo root and let the user navigate.
-        let repoRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        NSWorkspace.shared.open(repoRoot)
     }
 
     private func metaRow(_ label: String, _ value: String) -> some View {

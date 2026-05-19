@@ -16,6 +16,7 @@ enum SmokeTest {
             let profiles = try createProfiles()
             try launchAndTerminate(profiles: profiles)
             try marionetteLaunchCheck()
+            try scriptRunnerCheck()
         } catch {
             AppLogger.error("SmokeTest FAILED: \(error.localizedDescription)")
             exit(1)
@@ -201,5 +202,164 @@ enum SmokeTest {
         }
 
         AppLogger.info("[ok] marionette endpoint 127.0.0.1:\(port)")
+    }
+
+    private static func scriptRunnerCheck() throws {
+        AppLogger.info("[step] script runner env injection check")
+        guard let preset = FingerprintPresets.shared.all.first else {
+            throw NSError(
+                domain: "Smoke",
+                code: 11,
+                userInfo: [NSLocalizedDescriptionKey: "need one preset for script runner check"]
+            )
+        }
+
+        let name = "smoke-script-runner-\(preset.id)"
+        if let existing = ProfileStore.shared.list().first(where: { $0.name == name }) {
+            try ProfileStore.shared.delete(id: existing.id)
+        }
+
+        let profile = try ProfileStore.shared.save(Profile(
+            name: name,
+            fingerprint: preset.fingerprint(),
+            proxy: .direct,
+            notes: "Script runner smoke",
+            marionetteEnabled: true,
+            presetID: preset.id
+        ))
+
+        let launched = try CamoufoxLauncher.shared.launch(profile)
+        defer {
+            ScriptRunner.shared.terminateAll()
+            CamoufoxLauncher.shared.terminate(profileID: profile.id)
+        }
+
+        guard let port = launched.marionettePort else {
+            throw NSError(
+                domain: "Smoke",
+                code: 12,
+                userInfo: [NSLocalizedDescriptionKey: "marionette port not allocated for script runner"]
+            )
+        }
+
+        Thread.sleep(forTimeInterval: 2.0)
+
+        let runningInfo = RunningProfileInfo(
+            id: launched.profileID,
+            processID: launched.process.processIdentifier,
+            startedAt: launched.startedAt,
+            marionettePort: port
+        )
+
+        // Test 1: success script that prints env vars.
+        let automationDir = AppPaths.logsDir
+            .appendingPathComponent("automation", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: automationDir,
+            withIntermediateDirectories: true
+        )
+        let successScript = automationDir.appendingPathComponent("smoke-success.sh")
+        try """
+        #!/bin/bash
+        echo "MPFB_PROFILE_ID=$MPFB_PROFILE_ID"
+        echo "MPFB_MARIONETTE_ENDPOINT=$MPFB_MARIONETTE_ENDPOINT"
+        exit 0
+        """.write(to: successScript, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: successScript.path
+        )
+
+        _ = try ScriptRunner.shared.start(
+            scriptPath: successScript.path,
+            profile: profile,
+            runningInfo: runningInfo
+        )
+
+        // Wait for completion.
+        for _ in 0..<20 {
+            if ScriptRunner.shared.currentOrLastRun(for: profile.id)?.isTerminal == true { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+
+        let completedRun = ScriptRunner.shared.currentOrLastRun(for: profile.id)
+        guard let run = completedRun, run.isTerminal else {
+            throw NSError(
+                domain: "Smoke",
+                code: 13,
+                userInfo: [NSLocalizedDescriptionKey: "success script did not complete in time"]
+            )
+        }
+        guard run.status == .succeeded else {
+            throw NSError(
+                domain: "Smoke",
+                code: 14,
+                userInfo: [NSLocalizedDescriptionKey: "success script failed: exit=\(run.exitCode ?? -1)"]
+            )
+        }
+
+        let stdout = FileManager.default.contents(atPath: run.stdoutLogPath).flatMap {
+            String(data: $0, encoding: .utf8)
+        } ?? ""
+        guard stdout.contains("MPFB_PROFILE_ID=\(profile.id.uuidString)"),
+              stdout.contains("MPFB_MARIONETTE_ENDPOINT=127.0.0.1:\(port)") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 15,
+                userInfo: [NSLocalizedDescriptionKey: "env injection mismatch: \(stdout)"]
+            )
+        }
+        AppLogger.info("[ok] success script env injection verified")
+
+        // Test 2: failing script (exit 42).
+        let failScript = automationDir.appendingPathComponent("smoke-fail.sh")
+        try """
+        #!/bin/bash
+        echo "intentional failure" >&2
+        exit 42
+        """.write(to: failScript, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: failScript.path
+        )
+
+        _ = try ScriptRunner.shared.start(
+            scriptPath: failScript.path,
+            profile: profile,
+            runningInfo: runningInfo
+        )
+
+        for _ in 0..<20 {
+            if ScriptRunner.shared.currentOrLastRun(for: profile.id)?.isTerminal == true { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+
+        guard let failRun = ScriptRunner.shared.currentOrLastRun(for: profile.id),
+              failRun.isTerminal else {
+            throw NSError(
+                domain: "Smoke",
+                code: 16,
+                userInfo: [NSLocalizedDescriptionKey: "fail script did not complete in time"]
+            )
+        }
+        guard failRun.status == .failed, failRun.exitCode == 42 else {
+            throw NSError(
+                domain: "Smoke",
+                code: 17,
+                userInfo: [NSLocalizedDescriptionKey: "expected exit 42, got \(failRun.exitCode ?? -1)"]
+            )
+        }
+
+        let stderr = FileManager.default.contents(atPath: failRun.stderrLogPath).flatMap {
+            String(data: $0, encoding: .utf8)
+        } ?? ""
+        guard stderr.contains("intentional failure") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 18,
+                userInfo: [NSLocalizedDescriptionKey: "stderr missing expected content"]
+            )
+        }
+        AppLogger.info("[ok] fail script exit=42 stderr captured")
     }
 }

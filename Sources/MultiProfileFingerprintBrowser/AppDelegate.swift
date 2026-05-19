@@ -29,4 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Kill script subprocesses first, then browser processes.
+        ScriptRunner.shared.terminateAll()
+        for launched in CamoufoxLauncher.shared.running {
+            CamoufoxLauncher.shared.terminate(profileID: launched.profileID)
+        }
+    }
 }

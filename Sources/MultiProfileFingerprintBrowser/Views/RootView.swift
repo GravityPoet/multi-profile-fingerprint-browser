@@ -3,9 +3,11 @@ import SwiftUI
 
 struct RootView: View {
     @StateObject var state = AppState()
+    @StateObject var scriptRunner = ScriptRunner.shared
     @State private var selection: UUID?
     @State private var editingProfile: Profile?
     @State private var isNewProfile = false
+    @State private var selectedScriptPath: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -155,6 +157,8 @@ struct RootView: View {
                     Divider()
                     automationSection(for: profile)
                     Divider()
+                    scriptRunnerSection(for: profile)
+                    Divider()
                     FingerprintInspectorView(fingerprint: profile.fingerprint)
                 }
                 .padding(20)
@@ -264,6 +268,156 @@ struct RootView: View {
             }
             .controlSize(.small)
         }
+    }
+
+    private func scriptRunnerSection(for profile: Profile) -> some View {
+        let runningInfo = state.runningInfo(for: profile.id)
+        let isProfileRunning = runningInfo != nil
+        let isScriptRunning = scriptRunner.isRunning(profileID: profile.id)
+        let lastRun = scriptRunner.currentOrLastRun(for: profile.id)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(Localization.t("Script Runner", "脚本执行器"))
+                .font(.headline)
+
+            if !isProfileRunning {
+                Text(Localization.t(
+                    "Launch this profile first, then select a script to run.",
+                    "先启动该 Profile，然后选择要执行的脚本。"
+                ))
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    Button {
+                        selectScriptFile()
+                    } label: {
+                        Label(
+                            selectedScriptPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+                                ?? Localization.t("Select script…", "选择脚本…"),
+                            systemImage: "doc.badge.plus"
+                        )
+                    }
+                    .frame(maxWidth: 240)
+
+                    Button {
+                        runScript(profile: profile, runningInfo: runningInfo!)
+                    } label: {
+                        Label(Localization.t("Run", "执行"), systemImage: "play.circle")
+                    }
+                    .disabled(selectedScriptPath == nil || isScriptRunning)
+
+                    Button {
+                        scriptRunner.stop(profileID: profile.id)
+                    } label: {
+                        Label(Localization.t("Stop", "停止"), systemImage: "stop.circle")
+                    }
+                    .disabled(!isScriptRunning)
+
+                    Button {
+                        revealLastLogs()
+                    } label: {
+                        Label(Localization.t("Reveal logs", "打开日志"), systemImage: "folder")
+                    }
+                    .disabled(lastRun == nil)
+                }
+                .controlSize(.small)
+
+                if let run = lastRun {
+                    HStack(spacing: 12) {
+                        Label(
+                            scriptStatusLabel(run.status),
+                            systemImage: scriptStatusIcon(run.status)
+                        )
+                        .foregroundColor(scriptStatusColor(run.status))
+                        .font(.system(size: 12))
+
+                        if let exitCode = run.exitCode {
+                            Text("exit \(exitCode)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+
+                        Text(run.scriptFileName)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    if run.status == .failed {
+                        let tail = run.stderrTail(lines: 8)
+                        if !tail.isEmpty {
+                            Text(tail)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.red)
+                                .lineLimit(6)
+                                .truncationMode(.tail)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func scriptStatusLabel(_ status: ScriptRunStatus) -> String {
+        switch status {
+        case .idle: return Localization.t("Idle", "空闲")
+        case .running: return Localization.t("Running", "运行中")
+        case .succeeded: return Localization.t("Succeeded", "成功")
+        case .failed: return Localization.t("Failed", "失败")
+        case .cancelled: return Localization.t("Cancelled", "已取消")
+        }
+    }
+
+    private func scriptStatusIcon(_ status: ScriptRunStatus) -> String {
+        switch status {
+        case .idle: return "circle"
+        case .running: return "circle.fill"
+        case .succeeded: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        case .cancelled: return "slash.circle"
+        }
+    }
+
+    private func scriptStatusColor(_ status: ScriptRunStatus) -> Color {
+        switch status {
+        case .idle: return .secondary
+        case .running: return .orange
+        case .succeeded: return .green
+        case .failed: return .red
+        case .cancelled: return .gray
+        }
+    }
+
+    private func selectScriptFile() {
+        let panel = NSOpenPanel()
+        panel.title = Localization.t("Select Script", "选择脚本")
+        panel.allowedContentTypes = [.unixExecutable, .shellScript, .pythonScript, .perlScript, .rubyScript]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            selectedScriptPath = url.path
+        }
+    }
+
+    private func runScript(profile: Profile, runningInfo: RunningProfileInfo) {
+        guard let scriptPath = selectedScriptPath else { return }
+        do {
+            _ = try scriptRunner.start(
+                scriptPath: scriptPath,
+                profile: profile,
+                runningInfo: runningInfo
+            )
+        } catch {
+            state.lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func revealLastLogs() {
+        guard let profileID = selection,
+              let run = scriptRunner.currentOrLastRun(for: profileID) else { return }
+        let logDir = URL(fileURLWithPath: run.stdoutLogPath).deletingLastPathComponent()
+        NSWorkspace.shared.open(logDir)
     }
 
     private func metaRow(_ label: String, _ value: String) -> some View {

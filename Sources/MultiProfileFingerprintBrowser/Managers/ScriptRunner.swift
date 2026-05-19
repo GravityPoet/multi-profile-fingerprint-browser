@@ -110,11 +110,12 @@ final class ScriptRunner: ObservableObject {
                 stderrHandle.closeFile()
 
                 if var currentRun = self.activeRuns[profileID], currentRun.id == runID {
-                    if proc.terminationStatus == 0 {
-                        currentRun.markSucceeded()
-                    } else if currentRun.status == .stopping || currentRun.status == .cancelled {
-                        // User stopped it — mark as cancelled.
+                    // Check cancellation BEFORE exit code — a script that
+                    // catches SIGTERM and exits 0 should still show Cancelled.
+                    if currentRun.status == .stopping || currentRun.status == .cancelled {
                         currentRun.markCancelled()
+                    } else if proc.terminationStatus == 0 {
+                        currentRun.markSucceeded()
                     } else {
                         currentRun.markFailed(exitCode: proc.terminationStatus)
                     }

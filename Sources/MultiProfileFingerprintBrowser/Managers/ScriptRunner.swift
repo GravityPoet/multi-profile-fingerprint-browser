@@ -112,8 +112,9 @@ final class ScriptRunner: ObservableObject {
                 if var currentRun = self.activeRuns[profileID], currentRun.id == runID {
                     if proc.terminationStatus == 0 {
                         currentRun.markSucceeded()
-                    } else if currentRun.status == .cancelled {
-                        // Already marked cancelled.
+                    } else if currentRun.status == .stopping || currentRun.status == .cancelled {
+                        // User stopped it — mark as cancelled.
+                        currentRun.markCancelled()
                     } else {
                         currentRun.markFailed(exitCode: proc.terminationStatus)
                     }
@@ -149,20 +150,36 @@ final class ScriptRunner: ObservableObject {
     }
 
     /// Stop the active script for a profile. Does not terminate the browser.
+    /// Marks the run as `stopping` so no new script can start until the
+    /// process actually exits. If the process ignores SIGTERM for 5s,
+    /// escalates to SIGINT.
     func stop(profileID: UUID) {
         guard let process = processes[profileID], process.isRunning else { return }
-        process.terminate()
+        // Mark as stopping first — prevents new starts.
         if var run = activeRuns[profileID], run.status == .running {
-            run.markCancelled()
+            run.markStopping()
             activeRuns[profileID] = run
-            lastRuns[profileID] = run
+        }
+        process.terminate()
+        // Escalate to SIGINT if process ignores SIGTERM.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self = self else { return }
+            if let proc = self.processes[profileID], proc.isRunning {
+                AppLogger.info("Script for profile \(profileID) ignoring SIGTERM, sending SIGINT")
+                proc.interrupt()
+            }
         }
     }
 
-    /// Whether a script is currently running for the profile.
+    /// Whether a script is actively running (not stopping) for the profile.
     func isRunning(profileID: UUID) -> Bool {
-        if let run = activeRuns[profileID], run.status == .running {
-            return processes[profileID]?.isRunning == true
+        if let run = activeRuns[profileID] {
+            switch run.status {
+            case .running, .stopping:
+                return processes[profileID]?.isRunning == true
+            default:
+                return false
+            }
         }
         return false
     }

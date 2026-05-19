@@ -4,6 +4,7 @@ import Foundation
 enum ScriptRunStatus: String, Codable {
     case idle
     case running
+    case stopping   // SIGTERM sent, waiting for process to exit
     case succeeded
     case failed
     case cancelled
@@ -58,13 +59,25 @@ struct ScriptRun: Identifiable {
         endedAt = Date()
     }
 
+    mutating func markStopping() {
+        status = .stopping
+    }
+
+    /// Whether the script has finished (success, failure, or cancelled).
+    /// A stopping script is NOT terminal — the process is still winding down.
     var isTerminal: Bool {
         switch status {
         case .succeeded, .failed, .cancelled:
             return true
-        case .idle, .running:
+        case .idle, .running, .stopping:
             return false
         }
+    }
+
+    /// Whether a new script can be started for this profile.
+    /// Only true when the process has fully exited.
+    var isReadyForNewRun: Bool {
+        isTerminal
     }
 
     var scriptFileName: String {

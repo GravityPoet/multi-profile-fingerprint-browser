@@ -58,12 +58,27 @@ final class AppState: ObservableObject {
     }
 
     func deleteProfile(id: UUID) {
+        // Refuse to delete a running profile — stop it first.
+        if runningProfileIDs.contains(id) {
+            lastErrorMessage = Localization.t(
+                "Stop this profile before deleting it.",
+                "请先停止该 Profile 再删除。"
+            )
+            return
+        }
         runStoreOperation { try store.delete(id: id) }
     }
 
     func duplicateProfile(_ profile: Profile) {
-        var copy = profile
-        copy.name = profile.name + Localization.t(" (copy)", "（副本）")
+        // Create a new Profile with a fresh UUID so the copy is independent.
+        let copy = Profile(
+            name: profile.name + Localization.t(" (copy)", "（副本）"),
+            fingerprint: profile.fingerprint,
+            proxy: profile.proxy,
+            notes: profile.notes,
+            marionetteEnabled: profile.marionetteEnabled,
+            presetID: profile.presetID
+        )
         runStoreOperation { _ = try store.save(copy, allowDuplicateName: true) }
     }
 
@@ -80,6 +95,19 @@ final class AppState: ObservableObject {
 
     func launchProfile(id: UUID) {
         guard let profile = profiles.first(where: { $0.id == id }) else { return }
+
+        // If runtime is not ready, kick off download first.
+        if case .ready = runtimeStatus {
+            // Runtime is ready, proceed.
+        } else {
+            lastErrorMessage = Localization.t(
+                "Runtime is not ready yet. Click \"Download runtime\" first.",
+                "运行时尚未就绪，请先点击\"下载运行时\"。"
+            )
+            ensureRuntimeReadyInBackground()
+            return
+        }
+
         do {
             _ = try launcher.launch(profile)
             refreshRunning()

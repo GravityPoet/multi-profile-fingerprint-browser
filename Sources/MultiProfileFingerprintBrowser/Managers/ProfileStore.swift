@@ -91,6 +91,8 @@ final class ProfileStore {
         do {
             let data = try encoder.encode(profile)
             try data.write(to: metaURL, options: .atomic)
+            // Restrict permissions — meta.json may contain proxy credentials.
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: metaURL.path)
         } catch {
             throw ProfileStoreError.ioFailure(metaURL, underlying: error)
         }

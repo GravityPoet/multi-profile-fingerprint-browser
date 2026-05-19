@@ -100,7 +100,7 @@ final class CamoufoxLauncher {
 
         var marionettePort: Int? = nil
         if profile.marionetteEnabled {
-            marionettePort = try? PortAllocator.shared.allocate()
+            marionettePort = try PortAllocator.shared.allocate()
         }
 
         try writeUserJS(

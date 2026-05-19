@@ -369,6 +369,7 @@ struct RootView: View {
         switch status {
         case .idle: return Localization.t("Idle", "空闲")
         case .running: return Localization.t("Running", "运行中")
+        case .stopping: return Localization.t("Stopping", "停止中")
         case .succeeded: return Localization.t("Succeeded", "成功")
         case .failed: return Localization.t("Failed", "失败")
         case .cancelled: return Localization.t("Cancelled", "已取消")
@@ -379,6 +380,7 @@ struct RootView: View {
         switch status {
         case .idle: return "circle"
         case .running: return "circle.fill"
+        case .stopping: return "circle.dotted"
         case .succeeded: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         case .cancelled: return "slash.circle"
@@ -389,6 +391,7 @@ struct RootView: View {
         switch status {
         case .idle: return .secondary
         case .running: return .orange
+        case .stopping: return .yellow
         case .succeeded: return .green
         case .failed: return .red
         case .cancelled: return .gray

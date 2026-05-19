@@ -148,15 +148,22 @@ struct Fingerprint: Codable, Hashable {
     }
 
     /// Stable identity hash for UI display and change detection.
-    /// Independent of dictionary key ordering.
+    /// Uses canonical JSON (sorted keys) + SHA256, truncated to 16 hex chars.
+    /// Deterministic across processes and launches.
     var stableID: String {
+        // Build canonical JSON manually to ensure deterministic output.
         let sorted = properties.sorted { $0.key < $1.key }
-        var hasher = Hasher()
+        var parts: [String] = []
         for (k, v) in sorted {
-            hasher.combine(k)
-            hasher.combine(v)
+            let encoded = (try? JSONEncoder().encode(v)).flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+            let escapedKey = k.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            parts.append("\"\(escapedKey)\":\(encoded)")
         }
-        return String(format: "%016x", UInt64(bitPattern: Int64(hasher.finalize())))
+        let canonical = "{\(parts.joined(separator: ","))}"
+        let hash = SHA256Hasher.hash(data: Data(canonical.utf8))
+        // Truncate to 16 hex chars (64 bits) for display.
+        return String(hash.prefix(16))
     }
 }
 

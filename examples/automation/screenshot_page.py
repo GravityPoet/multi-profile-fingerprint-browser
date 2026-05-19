@@ -4,8 +4,7 @@ Save a screenshot of the current page to the user's output directory.
 
 Usage:
     # From the MPFB UI: select this script and click Run.
-    # From the terminal (profile already running):
-    eval "$(mpfb-script-env <profile-id>)"
+    # From the terminal (profile already running, env copied from UI):
     python3 screenshot_page.py [output_path]
 
 Output defaults to ~/Desktop/mpfb-screenshot-<timestamp>.png.

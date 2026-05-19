@@ -4,8 +4,7 @@ Demonstrate profile session persistence by writing and reading a cookie.
 
 Usage:
     # From the MPFB UI: select this script and click Run.
-    # From the terminal (profile already running):
-    eval "$(mpfb-script-env <profile-id>)"
+    # From the terminal (profile already running, env copied from UI):
     python3 session_check.py
 
 Requires: pip install marionette-driver

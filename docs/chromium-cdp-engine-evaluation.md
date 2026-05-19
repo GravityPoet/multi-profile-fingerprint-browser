@@ -13,18 +13,28 @@ engine alongside the current Camoufox (Firefox) engine.
 
 ### What CloakBrowser Is
 
-CloakBrowser is a **free, open-source (MIT)** stealth Chromium binary with
-42 source-level C++ patches. It is a drop-in Playwright/Puppeteer
-replacement — same API, just swap the import.
+CloakBrowser is a stealth Chromium binary with source-level C++ fingerprint
+patches. It is a drop-in Playwright/Puppeteer replacement — same API, just
+swap the import.
 
 Key characteristics:
 
 - **Stealth Chromium binary** with fingerprints modified at C++ source level
   (canvas, WebGL, audio, fonts, GPU, screen, automation signals, etc.)
-- **42 source-level patches** compiled into the binary, not JavaScript injection
+- **Multiple source-level patches** compiled into the binary, not JavaScript
+  injection (patch count varies by release; see upstream README)
 - **Auto-downloads** the binary on first use (`pip install cloakbrowser`)
 - **0.9 reCAPTCHA v3 score**, passes Cloudflare Turnstile, FingerprintJS
 - **`humanize=True`** flag for human-like mouse/keyboard/scroll behavior
+
+### License Structure
+
+CloakBrowser has a dual-license structure:
+
+- **Python/JS wrapper**: MIT license, open source
+- **Chromium binary**: Free to use, but redistribution is restricted per
+  `BINARY-LICENSE` in the repository. Bundling the binary in our release
+  requires explicit verification of redistribution rights.
 
 ### CloakBrowser-Manager (Separate Project)
 
@@ -40,9 +50,9 @@ This is a separate tool, not part of the core CloakBrowser package.
 
 CloakBrowser ships a custom Chromium binary (~200-400 MB). Key concerns:
 
-1. **License**: CloakBrowser itself is MIT, but the Chromium patches may
-   include proprietary fingerprint spoofing. Redistribution rights need
-   verification.
+1. **License**: The Python/JS wrapper is MIT, but the binary itself is
+   governed by a separate `BINARY-LICENSE` that restricts redistribution.
+   Bundling requires explicit permission or a legal review.
 2. **Binary trust**: Users must trust the pre-built binary hasn't been
    tampered with. No reproducible build process documented.
 3. **Update burden**: Binary auto-updates, but bundling means we'd need
@@ -54,12 +64,11 @@ CloakBrowser ships a custom Chromium binary (~200-400 MB). Key concerns:
 ### A: Adopt (Bundle CloakBrowser Binary)
 
 **Pros**:
-- Immediate Chromium fingerprint spoofing (42 source-level patches)
-- MIT-licensed, free to use
+- Immediate Chromium fingerprint spoofing (source-level patches)
 - Drop-in Playwright/Puppeteer replacement
 
 **Cons**:
-- Redistribution rights for the patched Chromium binary unclear
+- Binary redistribution restricted per BINARY-LICENSE; needs verification
 - Binary trust problem (no reproducible build)
 - ~200-400 MB per platform
 - Auto-update mechanism may conflict with bundling

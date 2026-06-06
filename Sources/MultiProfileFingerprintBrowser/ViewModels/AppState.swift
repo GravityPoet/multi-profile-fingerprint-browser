@@ -12,6 +12,12 @@ final class AppState: ObservableObject {
     @Published private(set) var runtimeStatus: CamoufoxRuntimeStatus = .notReady
     @Published var lastErrorMessage: String?
 
+    // MARK: Proxy safety gate
+    @Published var showNoProxyAlert = false
+    @Published var pendingLaunchProfileID: UUID?
+    @Published var isCheckingProxy = false
+    @Published var proxyCheckMessage: String?
+
     private let store = ProfileStore.shared
     private let launcher = CamoufoxLauncher.shared
     private let runtime = CamoufoxRuntime.shared
@@ -108,6 +114,55 @@ final class AppState: ObservableObject {
             return
         }
 
+        // Proxy safety gate: warn if no proxy configured.
+        if !profile.proxy.isEnabled {
+            pendingLaunchProfileID = id
+            showNoProxyAlert = true
+            return
+        }
+
+        // Proxy configured — validate connectivity before launch.
+        validateProxyAndLaunch(profile: profile)
+    }
+
+    /// Called when user confirms launching without a proxy.
+    func confirmLaunchWithoutProxy() {
+        showNoProxyAlert = false
+        guard let id = pendingLaunchProfileID else { return }
+        pendingLaunchProfileID = nil
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        doLaunch(profile)
+    }
+
+    func cancelNoProxyLaunch() {
+        showNoProxyAlert = false
+        pendingLaunchProfileID = nil
+    }
+
+    private func validateProxyAndLaunch(profile: Profile) {
+        isCheckingProxy = true
+        proxyCheckMessage = nil
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let result = await ProxyValidator.check(profile.proxy)
+            await MainActor.run {
+                self.isCheckingProxy = false
+                switch result {
+                case .ok:
+                    self.doLaunch(profile)
+                case .warning(let msg):
+                    // Non-blocking: warn but allow launch.
+                    self.proxyCheckMessage = msg
+                    self.doLaunch(profile)
+                case .failed(let msg):
+                    self.lastErrorMessage = msg
+                }
+            }
+        }
+    }
+
+    private func doLaunch(_ profile: Profile) {
         do {
             _ = try launcher.launch(profile)
             refreshRunning()

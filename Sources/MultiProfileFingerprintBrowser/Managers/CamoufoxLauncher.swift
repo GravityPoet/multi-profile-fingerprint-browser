@@ -108,7 +108,15 @@ final class CamoufoxLauncher {
             marionettePort: marionettePort
         )
 
-        let env = try buildEnvironment(fingerprint: profile.fingerprint)
+        // Auto-align timezone/locale/geolocation to proxy exit IP.
+        var fingerprint = profile.fingerprint
+        if profile.proxy.isEnabled {
+            fingerprint.geoip = .bool(true)
+            // Remove hardcoded timezone — let geoip derive it from exit IP.
+            fingerprint.timezone = nil
+        }
+
+        let env = try buildEnvironment(fingerprint: fingerprint)
         let process = Process()
         process.executableURL = binaryURL
         process.environment = env

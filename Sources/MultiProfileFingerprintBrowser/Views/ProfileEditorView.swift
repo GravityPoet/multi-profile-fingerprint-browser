@@ -69,6 +69,17 @@ struct ProfileEditorView: View {
                         TextField(Localization.t("Username (optional)", "用户名（可选）"), text: $draft.proxy.username)
                         SecureField(Localization.t("Password (optional)", "密码（可选）"), text: $draft.proxy.password)
                     }
+                    if draft.proxy.kind == .none {
+                        Label(
+                            Localization.t(
+                                "Real IP will be exposed without a proxy. Anti-detection tests will fail.",
+                                "未挂代理将暴露真实 IP，反检测测试将失败。"
+                            ),
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundColor(.red)
+                        .font(.system(size: 12))
+                    }
                 }
 
                 Section(Localization.t("Automation", "自动化")) {

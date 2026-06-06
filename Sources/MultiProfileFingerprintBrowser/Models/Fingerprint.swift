@@ -113,6 +113,13 @@ struct Fingerprint: Codable, Hashable {
         set { properties["timezone"] = newValue.map { .string($0) } }
     }
 
+    /// When `true`, Camoufox auto-aligns timezone/locale/geolocation to
+    /// the exit IP. When a string, treated as a specific IP for geo lookup.
+    var geoip: FingerprintValue? {
+        get { properties["geoip"] }
+        set { properties["geoip"] = newValue }
+    }
+
     var webglVendor: String? {
         get { properties["webGl:vendor"]?.asString }
         set { properties["webGl:vendor"] = newValue.map { .string($0) } }

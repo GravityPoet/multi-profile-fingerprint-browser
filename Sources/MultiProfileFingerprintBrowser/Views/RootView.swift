@@ -59,6 +59,22 @@ struct RootView: View {
         } message: { msg in
             Text(msg)
         }
+        .alert(
+            Localization.t("No Proxy Configured", "未配置代理"),
+            isPresented: $state.showNoProxyAlert
+        ) {
+            Button(Localization.t("Cancel", "取消"), role: .cancel) {
+                state.cancelNoProxyLaunch()
+            }
+            Button(Localization.t("Launch Anyway", "仍然启动"), role: .destructive) {
+                state.confirmLaunchWithoutProxy()
+            }
+        } message: {
+            Text(Localization.t(
+                "This profile has no proxy configured. Your real IP address will be exposed, and anti-detection tests will fail. Continue?",
+                "该配置未挂代理，将暴露真实 IP 地址，反检测测试将失败。是否继续？"
+            ))
+        }
     }
 
     // MARK: Toolbar

@@ -14,9 +14,12 @@ final class AppState: ObservableObject {
 
     // MARK: Proxy safety gate
     @Published var showNoProxyAlert = false
+    @Published var showProxyFailAlert = false
     @Published var pendingLaunchProfileID: UUID?
     @Published var isCheckingProxy = false
     @Published var proxyCheckMessage: String?
+    /// Geo info resolved from proxy exit IP. Passed to launcher for timezone injection.
+    private var resolvedGeo: ProxyGeoResolver.GeoInfo?
 
     private let store = ProfileStore.shared
     private let launcher = CamoufoxLauncher.shared
@@ -131,7 +134,7 @@ final class AppState: ObservableObject {
         guard let id = pendingLaunchProfileID else { return }
         pendingLaunchProfileID = nil
         guard let profile = profiles.first(where: { $0.id == id }) else { return }
-        doLaunch(profile)
+        doLaunch(profile, geo: nil)
     }
 
     func cancelNoProxyLaunch() {
@@ -142,6 +145,7 @@ final class AppState: ObservableObject {
     private func validateProxyAndLaunch(profile: Profile) {
         isCheckingProxy = true
         proxyCheckMessage = nil
+        resolvedGeo = nil
 
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -149,22 +153,55 @@ final class AppState: ObservableObject {
             await MainActor.run {
                 self.isCheckingProxy = false
                 switch result {
-                case .ok:
-                    self.doLaunch(profile)
+                case .ok(let exitIP):
+                    // Resolve geo from exit IP, then launch.
+                    self.resolveGeoAndLaunch(profile: profile, exitIP: exitIP)
                 case .warning(let msg):
                     // Non-blocking: warn but allow launch.
                     self.proxyCheckMessage = msg
-                    self.doLaunch(profile)
+                    self.doLaunch(profile, geo: nil)
                 case .failed(let msg):
-                    self.lastErrorMessage = msg
+                    // Not a hard block — show confirmation dialog.
+                    self.proxyCheckMessage = msg
+                    self.pendingLaunchProfileID = profile.id
+                    self.showProxyFailAlert = true
                 }
             }
         }
     }
 
-    private func doLaunch(_ profile: Profile) {
+    func confirmLaunchDespiteProxyFail() {
+        showProxyFailAlert = false
+        guard let id = pendingLaunchProfileID else { return }
+        pendingLaunchProfileID = nil
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        doLaunch(profile, geo: nil)
+    }
+
+    func cancelProxyFailLaunch() {
+        showProxyFailAlert = false
+        pendingLaunchProfileID = nil
+    }
+
+    private func resolveGeoAndLaunch(profile: Profile, exitIP: String) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let geo = await ProxyGeoResolver.resolve(profile.proxy)
+            await MainActor.run {
+                self.resolvedGeo = geo
+                if let geo {
+                    AppLogger.info("Resolved proxy geo: tz=\(geo.timezone) country=\(geo.country)")
+                } else {
+                    AppLogger.warn("Proxy geo resolution failed; will use fallback timezone")
+                }
+                self.doLaunch(profile, geo: geo)
+            }
+        }
+    }
+
+    private func doLaunch(_ profile: Profile, geo: ProxyGeoResolver.GeoInfo?) {
         do {
-            _ = try launcher.launch(profile)
+            _ = try launcher.launch(profile, geo: geo)
             refreshRunning()
         } catch {
             AppLogger.error("launch failed: \(error.localizedDescription)")

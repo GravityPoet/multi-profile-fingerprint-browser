@@ -80,8 +80,10 @@ final class CamoufoxLauncher {
     /// Launches Camoufox for the given profile. Throws if the runtime is not
     /// downloaded, if the profile is already running, or if the process
     /// fails to spawn.
+    /// - Parameter geo: Optional geolocation info resolved from proxy exit IP.
+    ///   When provided, injects concrete timezone so it matches the exit region.
     @discardableResult
-    func launch(_ profile: Profile) throws -> LaunchedProfile {
+    func launch(_ profile: Profile, geo: ProxyGeoResolver.GeoInfo? = nil) throws -> LaunchedProfile {
         if let existing = runningProfile(id: profile.id), existing.isRunning {
             throw CamoufoxLauncherError.alreadyRunning(profile.id)
         }
@@ -108,12 +110,26 @@ final class CamoufoxLauncher {
             marionettePort: marionettePort
         )
 
-        // Auto-align timezone/locale/geolocation to proxy exit IP.
+        // Inject timezone that matches the proxy exit IP.
+        // The Camoufox binary accepts concrete timezone via the "timezone" key
+        // (verified: old presets used it). The "geoip" key is a Python wrapper
+        // feature — the binary ignores it, so we resolve the timezone ourselves.
         var fingerprint = profile.fingerprint
         if profile.proxy.isEnabled {
-            fingerprint.geoip = .bool(true)
-            // Remove hardcoded timezone — let geoip derive it from exit IP.
-            fingerprint.timezone = nil
+            // Remove the no-op geoip key if set by old code.
+            fingerprint.geoip = nil
+            if let geo {
+                // Concrete timezone from proxy exit IP — the gold standard.
+                fingerprint.timezone = geo.timezone
+                AppLogger.info("Injected timezone from proxy geo: \(geo.timezone)")
+            } else if fingerprint.timezone == nil || fingerprint.timezone?.isEmpty == true {
+                // No geo resolved and no timezone set — use UTC as safe fallback.
+                // Better to be "UTC user" than "timezone leaks real location".
+                fingerprint.timezone = "UTC"
+                AppLogger.warn("No proxy geo; falling back to UTC timezone")
+            }
+            // If fingerprint already has a timezone (from preset), keep it —
+            // user chose that preset knowing their proxy region.
         }
 
         let env = try buildEnvironment(fingerprint: fingerprint)

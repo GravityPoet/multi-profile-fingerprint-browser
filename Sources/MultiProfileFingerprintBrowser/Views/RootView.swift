@@ -75,6 +75,22 @@ struct RootView: View {
                 "该配置未挂代理，将暴露真实 IP 地址，反检测测试将失败。是否继续？"
             ))
         }
+        .alert(
+            Localization.t("Proxy Check Failed", "代理检测失败"),
+            isPresented: $state.showProxyFailAlert
+        ) {
+            Button(Localization.t("Cancel", "取消"), role: .cancel) {
+                state.cancelProxyFailLaunch()
+            }
+            Button(Localization.t("Launch Anyway", "仍然启动"), role: .destructive) {
+                state.confirmLaunchDespiteProxyFail()
+            }
+        } message: {
+            Text(Localization.t(
+                "Could not verify proxy connectivity. The proxy may be unreachable or misconfigured. Launch anyway?\n\n\(state.proxyCheckMessage ?? "")",
+                "无法验证代理连通性，代理可能不可达或配置有误。是否仍要启动？\n\n\(state.proxyCheckMessage ?? "")"
+            ))
+        }
     }
 
     // MARK: Toolbar

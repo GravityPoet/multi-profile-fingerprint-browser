@@ -37,6 +37,20 @@ enum SmokeTest {
                 userInfo: [NSLocalizedDescriptionKey: "binary not executable: \(binary.path)"]
             )
         }
+        let resources = binary
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources", isDirectory: true)
+        let zhPack = resources
+            .appendingPathComponent("distribution/extensions", isDirectory: true)
+            .appendingPathComponent("langpack-zh-CN@firefox.mozilla.org.xpi")
+        guard FileManager.default.fileExists(atPath: zhPack.path) else {
+            throw NSError(
+                domain: "Smoke",
+                code: 54,
+                userInfo: [NSLocalizedDescriptionKey: "zh-CN language pack missing: \(zhPack.path)"]
+            )
+        }
         AppLogger.info("[ok] runtime ready -> \(binary.path)")
     }
 
@@ -165,6 +179,7 @@ enum SmokeTest {
             }
             AppLogger.info("[ok] user.js present at \(userJS.path)")
             try assertLaunchOverrides(launched: launched, profile: profile, userJS: userJS)
+            try assertProfileChromeOverrides(profile: profile)
 
             CamoufoxLauncher.shared.terminate(profileID: profile.id)
             // Wait for the OS to actually deliver SIGTERM and Firefox to clean up.
@@ -186,18 +201,30 @@ enum SmokeTest {
         userJS: URL
     ) throws {
         let body = try String(contentsOf: userJS, encoding: .utf8)
-        guard body.contains("user_pref(\"intl.accept_languages\", \"zh-CN,zh,en-US,en\");") else {
-            throw NSError(
-                domain: "Smoke",
-                code: 50,
-                userInfo: [NSLocalizedDescriptionKey: "Chinese accept-language pref missing for \(profile.name)"]
-            )
+        if let languages = profile.fingerprint.languages, !languages.isEmpty {
+            let expected = "user_pref(\"intl.accept_languages\", \"\(languages.joined(separator: ","))\");"
+            guard body.contains(expected) else {
+                throw NSError(
+                    domain: "Smoke",
+                    code: 50,
+                    userInfo: [NSLocalizedDescriptionKey: "profile accept-language pref changed for \(profile.name)"]
+                )
+            }
         }
         guard body.contains("user_pref(\"intl.locale.requested\", \"zh-CN\");") else {
             throw NSError(
                 domain: "Smoke",
                 code: 51,
                 userInfo: [NSLocalizedDescriptionKey: "Chinese UI locale pref missing for \(profile.name)"]
+            )
+        }
+        guard body.contains("user_pref(\"extensions.activeThemeID\", \"firefox-compact-light@mozilla.org\");"),
+              body.contains("user_pref(\"ui.systemUsesDarkTheme\", 0);"),
+              body.contains("user_pref(\"layout.css.prefers-color-scheme.content-override\", 1);") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 55,
+                userInfo: [NSLocalizedDescriptionKey: "light theme prefs missing for \(profile.name)"]
             )
         }
 
@@ -219,16 +246,56 @@ enum SmokeTest {
                 userInfo: [NSLocalizedDescriptionKey: "showcursor=false missing from CAMOU_CONFIG for \(profile.name)"]
             )
         }
-        guard config.contains("\"navigator.language\":\"zh-CN\""),
-              config.contains("\"navigator.languages\":[\"zh-CN\",\"zh\",\"en-US\",\"en\"]") else {
+        if let language = profile.fingerprint.properties["navigator.language"]?.asString {
+            guard config.contains("\"navigator.language\":\"\(language)\"") else {
+                throw NSError(
+                    domain: "Smoke",
+                    code: 53,
+                    userInfo: [NSLocalizedDescriptionKey: "profile navigator.language changed for \(profile.name)"]
+                )
+            }
+        }
+        if let languages = profile.fingerprint.languages,
+           let data = try? JSONEncoder().encode(languages),
+           let encoded = String(data: data, encoding: .utf8) {
+            guard config.contains("\"navigator.languages\":\(encoded)") else {
+                throw NSError(
+                    domain: "Smoke",
+                    code: 56,
+                    userInfo: [NSLocalizedDescriptionKey: "profile navigator.languages changed for \(profile.name)"]
+                )
+            }
+        }
+
+        AppLogger.info("[ok] launch overrides disable cursor overlay while preserving profile language")
+    }
+
+    private static func assertProfileChromeOverrides(profile: Profile) throws {
+        let firefoxProfileDir = AppPaths.firefoxProfileDir(for: profile)
+        let languagePack = firefoxProfileDir
+            .appendingPathComponent("extensions", isDirectory: true)
+            .appendingPathComponent("langpack-zh-CN@firefox.mozilla.org.xpi")
+        guard FileManager.default.fileExists(atPath: languagePack.path) else {
             throw NSError(
                 domain: "Smoke",
-                code: 53,
-                userInfo: [NSLocalizedDescriptionKey: "Chinese navigator language missing from CAMOU_CONFIG for \(profile.name)"]
+                code: 57,
+                userInfo: [NSLocalizedDescriptionKey: "profile zh-CN language pack missing for \(profile.name)"]
             )
         }
 
-        AppLogger.info("[ok] launch overrides disable cursor overlay and force zh-CN language")
+        let userChrome = firefoxProfileDir
+            .appendingPathComponent("chrome", isDirectory: true)
+            .appendingPathComponent("userChrome.css")
+        let body = try String(contentsOf: userChrome, encoding: .utf8)
+        guard body.contains("border-inline-end"),
+              body.contains("#tabbrowser-tabs") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 58,
+                userInfo: [NSLocalizedDescriptionKey: "tab separator userChrome.css missing for \(profile.name)"]
+            )
+        }
+        AppLogger.info("[ok] profile language pack and tab separator chrome present")
     }
 
     private static func marionetteLaunchCheck() throws {

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum CamoufoxLauncherError: Error, LocalizedError {
@@ -48,6 +49,9 @@ final class LaunchedProfile {
 ///   - `<firefox-profile>/user.js` (proxy, accept_languages, Marionette port)
 final class CamoufoxLauncher {
     static let shared = CamoufoxLauncher()
+
+    private static let camoufoxBundleIdentifier = "org.mozilla.camoufox"
+    private static let activationDelays: [TimeInterval] = [0.0, 0.4, 0.9, 1.6, 2.6, 3.8]
 
     /// Chunk size matches the upstream Python wrapper for non-Windows hosts.
     /// `pythonlib/camoufox/utils.py:80` — `32767 if OS != 'win' else 2047`.
@@ -131,6 +135,8 @@ final class CamoufoxLauncher {
             marionettePort: marionettePort,
             proxyRelay: proxyRelay
         )
+        try installProfileLanguagePackIfNeeded(firefoxProfileDir: firefoxProfileDir)
+        try writeUserChromeCSS(firefoxProfileDir: firefoxProfileDir)
 
         // Inject timezone that matches the proxy exit IP.
         // The Camoufox binary accepts concrete timezone via the "timezone" key
@@ -177,6 +183,10 @@ final class CamoufoxLauncher {
 
         do {
             try process.run()
+            activateBrowser(
+                processIdentifier: process.processIdentifier,
+                binaryURL: binaryURL
+            )
         } catch {
             if let port = marionettePort {
                 PortAllocator.shared.release(port)
@@ -201,6 +211,104 @@ final class CamoufoxLauncher {
 
         try? ProfileStore.shared.recordLaunch(of: profile)
         return launched
+    }
+
+    private func activateBrowser(processIdentifier: Int32, binaryURL: URL) {
+        let pid = pid_t(processIdentifier)
+        let appBundleURL = appBundleURL(for: binaryURL)
+        for (idx, delay) in Self.activationDelays.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self else { return }
+                let activated = self.activateRunningBrowser(
+                    processIdentifier: pid,
+                    appBundleURL: appBundleURL
+                )
+                if !activated, idx >= 3 {
+                    self.activateBrowserWithAppleScript(processIdentifier: pid)
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func activateRunningBrowser(processIdentifier pid: pid_t, appBundleURL: URL?) -> Bool {
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.camoufoxBundleIdentifier {
+            return true
+        }
+
+        var candidates: [NSRunningApplication] = []
+        if let byPID = NSRunningApplication(processIdentifier: pid) {
+            candidates.append(byPID)
+        }
+        candidates.append(
+            contentsOf: NSRunningApplication.runningApplications(
+                withBundleIdentifier: Self.camoufoxBundleIdentifier
+            )
+        )
+
+        var seenPIDs: Set<pid_t> = []
+        let apps = candidates.filter { app in
+            guard !app.isTerminated, seenPIDs.insert(app.processIdentifier).inserted else {
+                return false
+            }
+            if app.processIdentifier == pid {
+                return true
+            }
+            guard let appBundleURL else {
+                return true
+            }
+            return sameFileURL(app.bundleURL, appBundleURL)
+        }
+
+        var didActivate = false
+        for app in apps {
+            app.unhide()
+            if app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) {
+                didActivate = true
+            }
+        }
+        return didActivate ||
+            NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.camoufoxBundleIdentifier
+    }
+
+    private func activateBrowserWithAppleScript(processIdentifier pid: pid_t) {
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.camoufoxBundleIdentifier {
+            return
+        }
+
+        let script = """
+        tell application "System Events"
+            set pidMatches to application processes whose unix id is \(pid)
+            if (count of pidMatches) > 0 then
+                set frontmost of item 1 of pidMatches to true
+            else
+                set bundleMatches to application processes whose bundle identifier is "\(Self.camoufoxBundleIdentifier)"
+                if (count of bundleMatches) > 0 then set frontmost of item 1 of bundleMatches to true
+            end if
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+    }
+
+    private func appBundleURL(for binaryURL: URL) -> URL? {
+        var candidate = binaryURL.standardizedFileURL
+        while candidate.path != "/" {
+            if candidate.pathExtension == "app" {
+                return candidate
+            }
+            candidate = candidate.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    private func sameFileURL(_ lhs: URL?, _ rhs: URL) -> Bool {
+        guard let lhs else { return false }
+        return lhs.resolvingSymlinksInPath().standardizedFileURL.path ==
+            rhs.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     /// Sends SIGTERM to the profile's Camoufox process if it is running.
@@ -236,7 +344,12 @@ final class CamoufoxLauncher {
         prefs["app.update.enabled"] = false
         prefs["browser.shell.checkDefaultBrowser"] = false
         prefs["browser.startup.homepage_override.mstone"] = "ignore"
+        prefs["browser.theme.content-theme"] = 1
+        prefs["browser.theme.toolbar-theme"] = 1
+        prefs["extensions.activeThemeID"] = "firefox-compact-light@mozilla.org"
+        prefs["layout.css.prefers-color-scheme.content-override"] = 1
         prefs["toolkit.startup.max_resumed_crashes"] = -1
+        prefs["ui.systemUsesDarkTheme"] = 0
         prefs["media.peerconnection.ice.default_address_only"] = true
         prefs["media.peerconnection.ice.no_host"] = true
         prefs["media.peerconnection.ice.proxy_only_if_behind_proxy"] = true
@@ -266,6 +379,71 @@ final class CamoufoxLauncher {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             throw CamoufoxLauncherError.ioFailure(url, underlying: error)
+        }
+    }
+
+    private func installProfileLanguagePackIfNeeded(firefoxProfileDir: URL) throws {
+        guard Localization.isChinese else { return }
+
+        let sourceURL = AppPaths.downloadsCacheDir
+            .appendingPathComponent("langpack-zh-CN@firefox.mozilla.org.xpi")
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
+
+        let profileExtensionsURL = firefoxProfileDir
+            .appendingPathComponent("extensions", isDirectory: true)
+        let installedURL = profileExtensionsURL
+            .appendingPathComponent("langpack-zh-CN@firefox.mozilla.org.xpi")
+        do {
+            try FileManager.default.createDirectory(
+                at: profileExtensionsURL,
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: installedURL.path) ||
+                (try? SHA256Hasher.hash(fileAt: installedURL)) != (try? SHA256Hasher.hash(fileAt: sourceURL)) {
+                if FileManager.default.fileExists(atPath: installedURL.path) {
+                    try FileManager.default.removeItem(at: installedURL)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: installedURL)
+                try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: installedURL.path)
+            }
+        } catch {
+            throw CamoufoxLauncherError.ioFailure(installedURL, underlying: error)
+        }
+    }
+
+    private func writeUserChromeCSS(firefoxProfileDir: URL) throws {
+        let chromeDir = firefoxProfileDir.appendingPathComponent("chrome", isDirectory: true)
+        let userChromeURL = chromeDir.appendingPathComponent("userChrome.css")
+        let body = """
+        /* MultiProfileFingerprintBrowser profile chrome overrides. */
+        #TabsToolbar .tabbrowser-tab {
+          border-inline-end: 1px solid rgba(80, 80, 90, 0.35) !important;
+        }
+
+        #TabsToolbar .tabbrowser-tab:first-of-type {
+          border-inline-start: 1px solid rgba(80, 80, 90, 0.25) !important;
+        }
+
+        #TabsToolbar .tabbrowser-tab[selected="true"] .tab-background {
+          background-color: rgba(255, 255, 255, 0.88) !important;
+          box-shadow: inset 0 -2px 0 rgba(36, 99, 235, 0.85) !important;
+        }
+
+        #TabsToolbar .tabbrowser-tab:not([selected="true"]):hover .tab-background {
+          background-color: rgba(255, 255, 255, 0.46) !important;
+        }
+
+        #tabbrowser-tabs {
+          border-bottom: 1px solid rgba(80, 80, 90, 0.28) !important;
+        }
+
+        """
+        do {
+            try FileManager.default.createDirectory(at: chromeDir, withIntermediateDirectories: true)
+            try body.write(to: userChromeURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: userChromeURL.path)
+        } catch {
+            throw CamoufoxLauncherError.ioFailure(userChromeURL, underlying: error)
         }
     }
 
@@ -299,14 +477,6 @@ final class CamoufoxLauncher {
 
     private func applyLaunchOverrides(to fingerprint: inout Fingerprint) {
         fingerprint.properties["showcursor"] = .bool(false)
-
-        guard Localization.isChinese else { return }
-        let languages = ["zh-CN", "zh", "en-US", "en"]
-        fingerprint.properties["navigator.languages"] = .stringArray(languages)
-        fingerprint.properties["navigator.language"] = .string(languages[0])
-        fingerprint.properties["locale:language"] = .string("zh")
-        fingerprint.properties["locale:region"] = .string("CN")
-        fingerprint.properties["locale:all"] = .string(languages.joined(separator: ", "))
     }
 
     // MARK: Environment + args

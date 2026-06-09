@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = NSAppearance(named: .aqua)
         let hosting = NSHostingController(rootView: RootView())
 
         window = NSWindow(
@@ -18,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "Multi-Profile Anti-Detect Browser",
             "多账号反检测浏览器"
         )
+        window.appearance = NSAppearance(named: .aqua)
         window.contentViewController = hosting
         window.center()
         window.setFrameAutosaveName("main")

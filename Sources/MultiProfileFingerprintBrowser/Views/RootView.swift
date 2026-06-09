@@ -38,10 +38,12 @@ struct RootView: View {
                 },
                 onCancel: { editingProfile = nil },
                 onRandomize: {
-                    if var draft = editingProfile,
-                       let preset = FingerprintPresets.shared.randomPreset() {
-                        draft.fingerprint = preset.fingerprint()
-                        draft.presetID = preset.id
+                    if var draft = editingProfile {
+                        let seed = Profile.makeFingerprintSeed()
+                        let preset = FingerprintDeriver.defaultPreset()
+                        draft.fingerprintSeed = seed
+                        draft.fingerprint = FingerprintDeriver.derive(from: preset, seed: seed)
+                        draft.presetID = preset?.id
                         editingProfile = draft
                     }
                 }
@@ -89,6 +91,22 @@ struct RootView: View {
             Text(Localization.t(
                 "Could not verify proxy connectivity. The proxy may be unreachable or misconfigured. Launch anyway?\n\n\(state.proxyCheckMessage ?? "")",
                 "无法验证代理连通性，代理可能不可达或配置有误。是否仍要启动？\n\n\(state.proxyCheckMessage ?? "")"
+            ))
+        }
+        .alert(
+            Localization.t("Fingerprint Consistency Failed", "指纹一致性失败"),
+            isPresented: $state.showConsistencyFailAlert
+        ) {
+            Button(Localization.t("Cancel", "取消"), role: .cancel) {
+                state.cancelConsistencyFailLaunch()
+            }
+            Button(Localization.t("Launch Anyway", "仍然启动"), role: .destructive) {
+                state.confirmLaunchDespiteConsistencyFail()
+            }
+        } message: {
+            Text(Localization.t(
+                "This profile has critical fingerprint consistency conflicts. Launch anyway?\n\n\(state.consistencyCheckMessage ?? "")",
+                "该 Profile 存在严重指纹一致性冲突。是否仍要启动？\n\n\(state.consistencyCheckMessage ?? "")"
             ))
         }
     }
@@ -239,6 +257,7 @@ struct RootView: View {
                 Localization.t("Preset", "预设"),
                 profile.presetID.flatMap { FingerprintPresets.shared.preset(id: $0)?.label } ?? Localization.t("Custom", "自定义")
             )
+            metaRow(Localization.t("Seed", "种子"), String(profile.fingerprintSeed))
             metaRow(
                 Localization.t("Marionette", "Marionette"),
                 profile.marionetteEnabled
@@ -506,10 +525,12 @@ struct RootView: View {
     }
 
     private func beginNew() {
-        let preset = FingerprintPresets.shared.randomPreset()
+        let preset = FingerprintDeriver.defaultPreset()
+        let seed = Profile.makeFingerprintSeed()
         let draft = Profile(
             name: defaultName(),
-            fingerprint: preset?.fingerprint() ?? Fingerprint(),
+            fingerprint: FingerprintDeriver.derive(from: preset, seed: seed),
+            fingerprintSeed: seed,
             proxy: .direct,
             notes: "",
             marionetteEnabled: false,

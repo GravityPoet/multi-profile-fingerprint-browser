@@ -62,6 +62,17 @@ struct ProxyConfig: Codable, Hashable {
         }
     }
 
+    func firefoxPrefsForLocalRelay(host: String, port: Int) -> [String: AnyHashable] {
+        [
+            "network.proxy.type": 1,
+            "network.proxy.socks": host,
+            "network.proxy.socks_port": port,
+            "network.proxy.socks_version": 5,
+            "network.proxy.socks_remote_dns": true,
+            "network.proxy.no_proxies_on": "",
+        ]
+    }
+
     var displayString: String {
         switch kind {
         case .none:

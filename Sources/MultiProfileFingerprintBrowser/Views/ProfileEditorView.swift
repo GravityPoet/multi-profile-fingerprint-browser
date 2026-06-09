@@ -8,6 +8,7 @@ struct ProfileEditorView: View {
     let onRandomize: () -> Void
 
     private let presets = FingerprintPresets.shared.all
+    @State private var showRiskyPresets = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -28,15 +29,31 @@ struct ProfileEditorView: View {
                         get: { draft.presetID ?? "" },
                         set: { newID in
                             if let preset = presets.first(where: { $0.id == newID }) {
-                                draft.fingerprint = preset.fingerprint()
+                                draft.fingerprint = FingerprintDeriver.derive(from: preset, seed: draft.fingerprintSeed)
                                 draft.presetID = preset.id
                             }
                         }
                     )) {
                         Text(Localization.t("Custom", "自定义")).tag("")
-                        ForEach(presets) { p in
+                        ForEach(filteredPresets) { p in
                             Text(p.label).tag(p.id)
                         }
+                    }
+                    Toggle(
+                        Localization.t("Show risky Windows/Linux presets", "显示高风险 Windows/Linux 预设"),
+                        isOn: $showRiskyPresets
+                    )
+                    .font(.system(size: 12))
+                    if showRiskyPresets {
+                        Label(
+                            Localization.t(
+                                "Risky OS presets can conflict with a macOS host GPU, fonts and media stack.",
+                                "高风险 OS 预设可能与 macOS 主机 GPU、字体、媒体能力冲突。"
+                            ),
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundColor(.orange)
+                        .font(.system(size: 12))
                     }
                     HStack {
                         Button(Localization.t("Randomize", "随机生成")) {
@@ -44,6 +61,9 @@ struct ProfileEditorView: View {
                         }
                         .controlSize(.small)
                         Spacer()
+                        Text("Seed: \(draft.fingerprintSeed)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
                         Text(Localization.t(
                             "Stable ID: \(draft.fingerprint.stableID)",
                             "稳定标识：\(draft.fingerprint.stableID)"
@@ -88,11 +108,11 @@ struct ProfileEditorView: View {
                         isOn: $draft.marionetteEnabled
                     )
                     Text(Localization.t(
-                        "Allocates a unique TCP port at launch for headless / programmatic control.",
-                        "启动时为远程控制分配独立 TCP 端口。"
+                        "High risk: automation can expose webdriver-like artifacts. Ports are local-only.",
+                        "高风险：自动化可能暴露类似 webdriver 的痕迹。端口仅绑定本机。"
                     ))
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(draft.marionetteEnabled ? .red : .secondary)
                 }
             }
 
@@ -109,5 +129,9 @@ struct ProfileEditorView: View {
         }
         .padding(20)
         .frame(minWidth: 540, minHeight: 520)
+    }
+
+    private var filteredPresets: [FingerprintPreset] {
+        showRiskyPresets ? presets : FingerprintPresets.shared.macPresets
     }
 }

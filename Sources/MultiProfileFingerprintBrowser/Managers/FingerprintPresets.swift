@@ -63,6 +63,14 @@ final class FingerprintPresets {
 
     var all: [FingerprintPreset] { presets }
 
+    var macPresets: [FingerprintPreset] {
+        presets.filter { $0.os.caseInsensitiveCompare("macOS") == .orderedSame }
+    }
+
+    var riskyOSPresets: [FingerprintPreset] {
+        presets.filter { $0.os.caseInsensitiveCompare("macOS") != .orderedSame }
+    }
+
     func preset(id: String) -> FingerprintPreset? {
         presets.first { $0.id == id }
     }

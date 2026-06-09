@@ -8,6 +8,7 @@ enum CamoufoxRuntimeError: Error, LocalizedError {
     case sha256Mismatch(expected: String, actual: String)
     case extractFailed(underlying: Error)
     case binaryMissing(URL)
+    case selfTestFailed(String)
     case ioFailure(URL, underlying: Error)
 
     var errorDescription: String? {
@@ -24,6 +25,8 @@ enum CamoufoxRuntimeError: Error, LocalizedError {
             return "Extract failed: \(err.localizedDescription)"
         case .binaryMissing(let url):
             return "Camoufox binary missing after extract at \(url.path)"
+        case .selfTestFailed(let message):
+            return "Camoufox privacy self-test failed: \(message)"
         case .ioFailure(let url, let err):
             return "I/O failure at \(url.path): \(err.localizedDescription)"
         }
@@ -109,6 +112,7 @@ final class CamoufoxRuntime {
         let binaryURL = expectedBinaryURL(for: release)
 
         if FileManager.default.isExecutableFile(atPath: binaryURL.path) {
+            try runPrivacySelfTest(binaryURL: binaryURL, release: release)
             status = .ready(binaryURL)
             return binaryURL
         }
@@ -124,6 +128,7 @@ final class CamoufoxRuntime {
             throw CamoufoxRuntimeError.binaryMissing(binaryURL)
         }
 
+        try runPrivacySelfTest(binaryURL: binaryURL, release: release)
         status = .ready(binaryURL)
         AppLogger.info("Camoufox runtime ready at \(binaryURL.path)")
         return binaryURL
@@ -202,6 +207,16 @@ final class CamoufoxRuntime {
             throw CamoufoxRuntimeError.extractFailed(underlying: error)
         }
         AppLogger.info("Camoufox extracted into \(destDir.path)")
+    }
+
+    private func runPrivacySelfTest(binaryURL: URL, release: CamoufoxRelease) throws {
+        status = .verifying
+        do {
+            try PrivacySelfTestRunner.ensurePassed(binaryURL: binaryURL, release: release)
+        } catch {
+            status = .failed(error.localizedDescription)
+            throw CamoufoxRuntimeError.selfTestFailed(error.localizedDescription)
+        }
     }
 
     // MARK: Host architecture

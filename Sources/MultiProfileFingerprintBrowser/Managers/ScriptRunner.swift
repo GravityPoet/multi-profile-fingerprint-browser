@@ -61,6 +61,7 @@ final class ScriptRunner: ObservableObject {
             .appendingPathComponent("automation", isDirectory: true)
             .appendingPathComponent(runID.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: logDir.path)
 
         let stdoutLog = logDir.appendingPathComponent("stdout.log").path
         let stderrLog = logDir.appendingPathComponent("stderr.log").path
@@ -68,6 +69,8 @@ final class ScriptRunner: ObservableObject {
         // Create empty log files.
         FileManager.default.createFile(atPath: stdoutLog, contents: nil)
         FileManager.default.createFile(atPath: stderrLog, contents: nil)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: stdoutLog)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: stderrLog)
 
         var run = ScriptRun(
             id: runID,

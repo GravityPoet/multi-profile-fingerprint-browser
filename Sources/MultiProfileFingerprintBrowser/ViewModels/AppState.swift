@@ -15,9 +15,11 @@ final class AppState: ObservableObject {
     // MARK: Proxy safety gate
     @Published var showNoProxyAlert = false
     @Published var showProxyFailAlert = false
+    @Published var showConsistencyFailAlert = false
     @Published var pendingLaunchProfileID: UUID?
     @Published var isCheckingProxy = false
     @Published var proxyCheckMessage: String?
+    @Published var consistencyCheckMessage: String?
     /// Geo info resolved from proxy exit IP. Passed to launcher for timezone injection.
     private var resolvedGeo: ProxyGeoResolver.GeoInfo?
 
@@ -50,10 +52,12 @@ final class AppState: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = "Profile \(profiles.count + 1)"
         let finalName = trimmed.isEmpty ? fallback : trimmed
-        let preset = FingerprintPresets.shared.randomPreset()
+        let preset = FingerprintDeriver.defaultPreset()
+        let seed = Profile.makeFingerprintSeed()
         let profile = Profile(
             name: finalName,
-            fingerprint: preset?.fingerprint() ?? Fingerprint(),
+            fingerprint: FingerprintDeriver.derive(from: preset, seed: seed),
+            fingerprintSeed: seed,
             proxy: .direct,
             notes: "",
             marionetteEnabled: false,
@@ -80,9 +84,12 @@ final class AppState: ObservableObject {
 
     func duplicateProfile(_ profile: Profile) {
         // Create a new Profile with a fresh UUID so the copy is independent.
+        let seed = Profile.makeFingerprintSeed()
+        let preset = profile.presetID.flatMap { FingerprintPresets.shared.preset(id: $0) }
         let copy = Profile(
             name: profile.name + Localization.t(" (copy)", "（副本）"),
-            fingerprint: profile.fingerprint,
+            fingerprint: FingerprintDeriver.derive(from: preset, seed: seed),
+            fingerprintSeed: seed,
             proxy: profile.proxy,
             notes: profile.notes,
             marionetteEnabled: profile.marionetteEnabled,
@@ -93,10 +100,11 @@ final class AppState: ObservableObject {
 
     func randomizeFingerprint(for profile: Profile) {
         var updated = profile
-        if let preset = FingerprintPresets.shared.randomPreset() {
-            updated.fingerprint = preset.fingerprint()
-            updated.presetID = preset.id
-        }
+        let seed = Profile.makeFingerprintSeed()
+        let preset = FingerprintDeriver.defaultPreset()
+        updated.fingerprintSeed = seed
+        updated.fingerprint = FingerprintDeriver.derive(from: preset, seed: seed)
+        updated.presetID = preset?.id
         runStoreOperation { try store.save(updated, allowDuplicateName: true) }
     }
 
@@ -178,6 +186,19 @@ final class AppState: ObservableObject {
         doLaunch(profile, geo: nil)
     }
 
+    func confirmLaunchDespiteConsistencyFail() {
+        showConsistencyFailAlert = false
+        guard let id = pendingLaunchProfileID else { return }
+        pendingLaunchProfileID = nil
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        doLaunch(profile, geo: resolvedGeo, skipConsistencyGate: true)
+    }
+
+    func cancelConsistencyFailLaunch() {
+        showConsistencyFailAlert = false
+        pendingLaunchProfileID = nil
+    }
+
     func cancelProxyFailLaunch() {
         showProxyFailAlert = false
         pendingLaunchProfileID = nil
@@ -199,9 +220,22 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func doLaunch(_ profile: Profile, geo: ProxyGeoResolver.GeoInfo?) {
+    private func doLaunch(_ profile: Profile, geo: ProxyGeoResolver.GeoInfo?, skipConsistencyGate: Bool = false) {
+        if !skipConsistencyGate {
+            let report = FingerprintConsistencyScorer.score(profile: profile, geo: geo)
+            if !report.canLaunch {
+                consistencyCheckMessage = report.summary
+                pendingLaunchProfileID = profile.id
+                resolvedGeo = geo
+                showConsistencyFailAlert = true
+                return
+            }
+            if !report.warnings.isEmpty {
+                proxyCheckMessage = report.summary
+            }
+        }
         do {
-            _ = try launcher.launch(profile, geo: geo)
+            _ = try launcher.launch(profile, geo: geo, skipConsistencyGate: skipConsistencyGate)
             refreshRunning()
         } catch {
             AppLogger.error("launch failed: \(error.localizedDescription)")

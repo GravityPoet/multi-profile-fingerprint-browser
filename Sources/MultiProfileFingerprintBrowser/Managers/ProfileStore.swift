@@ -48,8 +48,10 @@ final class ProfileStore {
             )
             var profiles: [Profile] = []
             for dir in contents where dir.hasDirectoryPath {
+                try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
                 let metaURL = dir.appendingPathComponent("meta.json")
                 guard fm.fileExists(atPath: metaURL.path) else { continue }
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: metaURL.path)
                 do {
                     let data = try Data(contentsOf: metaURL)
                     let profile = try decoder.decode(Profile.self, from: data)
@@ -86,6 +88,7 @@ final class ProfileStore {
 
         let dir = AppPaths.profileDir(for: profile)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
 
         let metaURL = AppPaths.profileMetaURL(for: profile)
         do {

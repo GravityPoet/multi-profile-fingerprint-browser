@@ -3,6 +3,7 @@ import Foundation
 enum CamoufoxLauncherError: Error, LocalizedError {
     case runtimeNotReady
     case alreadyRunning(UUID)
+    case consistencyFailed(String)
     case spawnFailed(underlying: Error)
     case ioFailure(URL, underlying: Error)
 
@@ -12,6 +13,8 @@ enum CamoufoxLauncherError: Error, LocalizedError {
             return "Camoufox runtime is not ready yet. Download the runtime first."
         case .alreadyRunning(let id):
             return "Profile \(id.uuidString) is already running"
+        case .consistencyFailed(let message):
+            return "Fingerprint consistency check failed:\n\(message)"
         case .spawnFailed(let err):
             return "Failed to launch Camoufox: \(err.localizedDescription)"
         case .ioFailure(let url, let err):
@@ -25,12 +28,14 @@ final class LaunchedProfile {
     let profileID: UUID
     let process: Process
     let marionettePort: Int?
+    let proxyRelay: ProxyRelay?
     let startedAt: Date
 
-    init(profileID: UUID, process: Process, marionettePort: Int?, startedAt: Date) {
+    init(profileID: UUID, process: Process, marionettePort: Int?, proxyRelay: ProxyRelay?, startedAt: Date) {
         self.profileID = profileID
         self.process = process
         self.marionettePort = marionettePort
+        self.proxyRelay = proxyRelay
         self.startedAt = startedAt
     }
 
@@ -83,9 +88,21 @@ final class CamoufoxLauncher {
     /// - Parameter geo: Optional geolocation info resolved from proxy exit IP.
     ///   When provided, injects concrete timezone so it matches the exit region.
     @discardableResult
-    func launch(_ profile: Profile, geo: ProxyGeoResolver.GeoInfo? = nil) throws -> LaunchedProfile {
+    func launch(_ profile: Profile, geo: ProxyGeoResolver.GeoInfo? = nil, skipConsistencyGate: Bool = false) throws -> LaunchedProfile {
         if let existing = runningProfile(id: profile.id), existing.isRunning {
             throw CamoufoxLauncherError.alreadyRunning(profile.id)
+        }
+
+        var launchFingerprint = profile.fingerprint
+        applyLaunchOverrides(to: &launchFingerprint)
+        var launchProfile = profile
+        launchProfile.fingerprint = launchFingerprint
+
+        if !skipConsistencyGate {
+            let report = FingerprintConsistencyScorer.score(profile: launchProfile, geo: geo)
+            if !report.canLaunch {
+                throw CamoufoxLauncherError.consistencyFailed(report.summary)
+            }
         }
 
         let binaryURL = try CamoufoxRuntime.shared.ensureReady()
@@ -96,9 +113,13 @@ final class CamoufoxLauncher {
                 at: firefoxProfileDir,
                 withIntermediateDirectories: true
             )
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: AppPaths.profileDir(for: profile).path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: firefoxProfileDir.path)
         } catch {
             throw CamoufoxLauncherError.ioFailure(firefoxProfileDir, underlying: error)
         }
+
+        let proxyRelay = try profile.proxy.isEnabled ? ProxyRelay.start(for: profile.proxy) : nil
 
         var marionettePort: Int? = nil
         if profile.marionetteEnabled {
@@ -106,33 +127,33 @@ final class CamoufoxLauncher {
         }
 
         try writeUserJS(
-            for: profile,
-            marionettePort: marionettePort
+            for: launchProfile,
+            marionettePort: marionettePort,
+            proxyRelay: proxyRelay
         )
 
         // Inject timezone that matches the proxy exit IP.
         // The Camoufox binary accepts concrete timezone via the "timezone" key
         // (verified: old presets used it). The "geoip" key is a Python wrapper
         // feature — the binary ignores it, so we resolve the timezone ourselves.
-        var fingerprint = profile.fingerprint
         if profile.proxy.isEnabled {
             // Remove the no-op geoip key if set by old code.
-            fingerprint.geoip = nil
+            launchFingerprint.geoip = nil
             if let geo {
                 // Concrete timezone from proxy exit IP — the gold standard.
-                fingerprint.timezone = geo.timezone
+                launchFingerprint.timezone = geo.timezone
                 AppLogger.info("Injected timezone from proxy geo: \(geo.timezone)")
-            } else if fingerprint.timezone == nil || fingerprint.timezone?.isEmpty == true {
+            } else if launchFingerprint.timezone == nil || launchFingerprint.timezone?.isEmpty == true {
                 // No geo resolved and no timezone set — use UTC as safe fallback.
                 // Better to be "UTC user" than "timezone leaks real location".
-                fingerprint.timezone = "UTC"
+                launchFingerprint.timezone = "UTC"
                 AppLogger.warn("No proxy geo; falling back to UTC timezone")
             }
             // If fingerprint already has a timezone (from preset), keep it —
             // user chose that preset knowing their proxy region.
         }
 
-        let env = try buildEnvironment(fingerprint: fingerprint)
+        let env = try buildEnvironment(fingerprint: launchFingerprint)
         let process = Process()
         process.executableURL = binaryURL
         process.environment = env
@@ -149,6 +170,7 @@ final class CamoufoxLauncher {
                 if let port = marionettePort {
                     PortAllocator.shared.release(port)
                 }
+                proxyRelay?.stop()
             }
             self.notifyChange()
         }
@@ -159,6 +181,7 @@ final class CamoufoxLauncher {
             if let port = marionettePort {
                 PortAllocator.shared.release(port)
             }
+            proxyRelay?.stop()
             throw CamoufoxLauncherError.spawnFailed(underlying: error)
         }
 
@@ -166,6 +189,7 @@ final class CamoufoxLauncher {
             profileID: profile.id,
             process: process,
             marionettePort: marionettePort,
+            proxyRelay: proxyRelay,
             startedAt: Date()
         )
         registryQueue.sync { registry[profile.id] = launched }
@@ -187,11 +211,20 @@ final class CamoufoxLauncher {
 
     // MARK: user.js generation
 
-    private func writeUserJS(for profile: Profile, marionettePort: Int?) throws {
+    private func writeUserJS(for profile: Profile, marionettePort: Int?, proxyRelay: ProxyRelay?) throws {
         var prefs: [String: AnyHashable] = [:]
 
-        for (k, v) in profile.proxy.firefoxPrefs {
-            prefs[k] = v
+        if let proxyRelay {
+            for (k, v) in profile.proxy.firefoxPrefsForLocalRelay(
+                host: proxyRelay.localHost,
+                port: proxyRelay.localPort
+            ) {
+                prefs[k] = v
+            }
+        } else {
+            for (k, v) in profile.proxy.firefoxPrefs {
+                prefs[k] = v
+            }
         }
         for (k, v) in profile.fingerprint.derivedFirefoxPrefs() {
             prefs[k] = v
@@ -204,10 +237,22 @@ final class CamoufoxLauncher {
         prefs["browser.shell.checkDefaultBrowser"] = false
         prefs["browser.startup.homepage_override.mstone"] = "ignore"
         prefs["toolkit.startup.max_resumed_crashes"] = -1
+        prefs["media.peerconnection.ice.default_address_only"] = true
+        prefs["media.peerconnection.ice.no_host"] = true
+        prefs["media.peerconnection.ice.proxy_only_if_behind_proxy"] = true
+        prefs["media.peerconnection.ice.obfuscate_host_addresses"] = true
+        prefs["media.peerconnection.ice.obfuscate_host_addresses.blocklist"] = true
+        prefs["media.peerconnection.ice.relay_only"] = profile.proxy.isEnabled
+        if Localization.isChinese {
+            prefs["intl.locale.requested"] = "zh-CN"
+            prefs["intl.regional_prefs.use_os_locales"] = true
+            prefs["javascript.use_us_english_locale"] = false
+        }
 
         if let port = marionettePort {
             prefs["marionette.enabled"] = true
             prefs["marionette.port"] = port
+            prefs["marionette.host"] = "127.0.0.1"
         }
 
         let lines = prefs
@@ -218,6 +263,7 @@ final class CamoufoxLauncher {
         let url = AppPaths.userJSURL(for: profile)
         do {
             try body.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             throw CamoufoxLauncherError.ioFailure(url, underlying: error)
         }
@@ -249,6 +295,18 @@ final class CamoufoxLauncher {
             return "\"\(escaped)\""
         }
         return "\"\(base)\""
+    }
+
+    private func applyLaunchOverrides(to fingerprint: inout Fingerprint) {
+        fingerprint.properties["showcursor"] = .bool(false)
+
+        guard Localization.isChinese else { return }
+        let languages = ["zh-CN", "zh", "en-US", "en"]
+        fingerprint.properties["navigator.languages"] = .stringArray(languages)
+        fingerprint.properties["navigator.language"] = .string(languages[0])
+        fingerprint.properties["locale:language"] = .string("zh")
+        fingerprint.properties["locale:region"] = .string("CN")
+        fingerprint.properties["locale:all"] = .string(languages.joined(separator: ", "))
     }
 
     // MARK: Environment + args

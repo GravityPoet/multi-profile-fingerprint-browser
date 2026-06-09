@@ -2,7 +2,11 @@ import Foundation
 
 enum Localization {
     static var isChinese: Bool {
-        Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
+        let override = ProcessInfo.processInfo.environment["MPFB_UI_LANGUAGE"]?.lowercased()
+        if let override {
+            return override.hasPrefix("zh")
+        }
+        return true
     }
 
     static func t(_ en: String, _ zh: String) -> String {

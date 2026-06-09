@@ -19,49 +19,14 @@ enum ProxyValidator {
             ))
         }
 
-        // SOCKS5 with credentials: URLSession SOCKS5 auth is unreliable on macOS.
-        // Skip the probe and return a warning — the browser (Camoufox) handles
-        // SOCKS5 auth via user.js natively, so we trust the user's config.
-        if proxy.kind == .socks5 && proxy.hasCredentials {
-            AppLogger.info("ProxyValidator: SOCKS5+auth, skipping probe (browser handles natively)")
-            return .warning(Localization.t(
-                "SOCKS5 with auth — skipping connectivity probe. Browser will handle authentication.",
-                "SOCKS5 认证代理 — 跳过连通性探测，浏览器将自行处理认证。"
-            ))
+        if let ip = await ProxyGeoResolver.exitIP(proxy) {
+            AppLogger.info("ProxyValidator: exit IP = \(ip)")
+            return .ok(exitIP: ip)
         }
-
-        let url = URL(string: "https://api.ipify.org?format=json")!
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 15
-        ProxyGeoResolver.applyProxy(proxy, to: config)
-
-        let delegate = ProxyAuthDelegate(proxy: proxy)
-        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
-
-        do {
-            let (data, response) = try await session.data(from: url)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                return .failed(Localization.t(
-                    "Proxy check failed: unexpected HTTP status.",
-                    "代理检测失败：HTTP 状态异常。"
-                ))
-            }
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let ip = json["ip"] as? String {
-                AppLogger.info("ProxyValidator: exit IP = \(ip)")
-                return .ok(exitIP: ip)
-            }
-            return .warning(Localization.t(
-                "Proxy responded but could not parse exit IP.",
-                "代理已响应但无法解析出口 IP。"
-            ))
-        } catch {
-            return .failed(Localization.t(
-                "Proxy probe failed: \(error.localizedDescription)",
-                "代理探测失败：\(error.localizedDescription)"
-            ))
-        }
+        return .failed(Localization.t(
+            "Proxy probe failed: could not fetch exit IP through the configured proxy.",
+            "代理探测失败：无法通过该代理获取出口 IP。"
+        ))
     }
 }
 

@@ -13,10 +13,12 @@ enum SmokeTest {
         do {
             try runtimeCheck()
             try chunkConfigCheck()
+            try seedAndPresetCheck()
             let profiles = try createProfiles()
             try launchAndTerminate(profiles: profiles)
             try marionetteLaunchCheck()
             try scriptRunnerCheck()
+            try permissionsCheck()
         } catch {
             AppLogger.error("SmokeTest FAILED: \(error.localizedDescription)")
             exit(1)
@@ -60,6 +62,45 @@ enum SmokeTest {
         AppLogger.info("[ok] chunking 3-part round-trip identical")
     }
 
+    private static func seedAndPresetCheck() throws {
+        AppLogger.info("[step] seed + Mac default check")
+        guard let preset = FingerprintDeriver.defaultPreset() else {
+            throw NSError(
+                domain: "Smoke",
+                code: 30,
+                userInfo: [NSLocalizedDescriptionKey: "no default preset"]
+            )
+        }
+        guard preset.os == "macOS" else {
+            throw NSError(
+                domain: "Smoke",
+                code: 31,
+                userInfo: [NSLocalizedDescriptionKey: "default preset must be macOS, got \(preset.os)"]
+            )
+        }
+        let seedA = Profile.makeFingerprintSeed()
+        var seedB = Profile.makeFingerprintSeed()
+        if seedB == seedA { seedB = seedB &+ 1 }
+        let fpA = FingerprintDeriver.derive(from: preset, seed: seedA)
+        let fpB = FingerprintDeriver.derive(from: preset, seed: seedB)
+        guard seedA != seedB, fpA.stableID != fpB.stableID else {
+            throw NSError(
+                domain: "Smoke",
+                code: 32,
+                userInfo: [NSLocalizedDescriptionKey: "different profile seeds did not produce distinct fingerprints"]
+            )
+        }
+        let legacyID = UUID()
+        guard Profile.legacySeed(for: legacyID) == Profile.legacySeed(for: legacyID) else {
+            throw NSError(
+                domain: "Smoke",
+                code: 33,
+                userInfo: [NSLocalizedDescriptionKey: "legacy seed derivation is not stable"]
+            )
+        }
+        AppLogger.info("[ok] seed derivation stable and default preset is macOS")
+    }
+
     private static func createProfiles() throws -> [Profile] {
         AppLogger.info("[step] create 3 profiles from different presets")
         try AppPaths.ensureExists()
@@ -80,9 +121,11 @@ enum SmokeTest {
             if let existing = ProfileStore.shared.list().first(where: { $0.name == name }) {
                 try ProfileStore.shared.delete(id: existing.id)
             }
+            let seed = Profile.makeFingerprintSeed()
             let profile = Profile(
                 name: name,
-                fingerprint: preset.fingerprint(),
+                fingerprint: FingerprintDeriver.derive(from: preset, seed: seed),
+                fingerprintSeed: seed,
                 proxy: .direct,
                 notes: "Phase 1.8 smoke",
                 marionetteEnabled: false,
@@ -121,6 +164,7 @@ enum SmokeTest {
                 )
             }
             AppLogger.info("[ok] user.js present at \(userJS.path)")
+            try assertLaunchOverrides(launched: launched, profile: profile, userJS: userJS)
 
             CamoufoxLauncher.shared.terminate(profileID: profile.id)
             // Wait for the OS to actually deliver SIGTERM and Firefox to clean up.
@@ -134,6 +178,57 @@ enum SmokeTest {
             }
             AppLogger.info("[ok] terminated \(profile.name) status=\(launched.process.terminationStatus)")
         }
+    }
+
+    private static func assertLaunchOverrides(
+        launched: LaunchedProfile,
+        profile: Profile,
+        userJS: URL
+    ) throws {
+        let body = try String(contentsOf: userJS, encoding: .utf8)
+        guard body.contains("user_pref(\"intl.accept_languages\", \"zh-CN,zh,en-US,en\");") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 50,
+                userInfo: [NSLocalizedDescriptionKey: "Chinese accept-language pref missing for \(profile.name)"]
+            )
+        }
+        guard body.contains("user_pref(\"intl.locale.requested\", \"zh-CN\");") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 51,
+                userInfo: [NSLocalizedDescriptionKey: "Chinese UI locale pref missing for \(profile.name)"]
+            )
+        }
+
+        let env = launched.process.environment ?? [:]
+        let config = env
+            .filter { $0.key.hasPrefix("CAMOU_CONFIG_") }
+            .sorted { lhs, rhs in
+                let left = Int(lhs.key.replacingOccurrences(of: "CAMOU_CONFIG_", with: "")) ?? 0
+                let right = Int(rhs.key.replacingOccurrences(of: "CAMOU_CONFIG_", with: "")) ?? 0
+                return left < right
+            }
+            .map(\.value)
+            .joined()
+
+        guard config.contains("\"showcursor\":false") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 52,
+                userInfo: [NSLocalizedDescriptionKey: "showcursor=false missing from CAMOU_CONFIG for \(profile.name)"]
+            )
+        }
+        guard config.contains("\"navigator.language\":\"zh-CN\""),
+              config.contains("\"navigator.languages\":[\"zh-CN\",\"zh\",\"en-US\",\"en\"]") else {
+            throw NSError(
+                domain: "Smoke",
+                code: 53,
+                userInfo: [NSLocalizedDescriptionKey: "Chinese navigator language missing from CAMOU_CONFIG for \(profile.name)"]
+            )
+        }
+
+        AppLogger.info("[ok] launch overrides disable cursor overlay and force zh-CN language")
     }
 
     private static func marionetteLaunchCheck() throws {
@@ -151,9 +246,11 @@ enum SmokeTest {
             try ProfileStore.shared.delete(id: existing.id)
         }
 
+        let seed = Profile.makeFingerprintSeed()
         let profile = try ProfileStore.shared.save(Profile(
             name: name,
-            fingerprint: preset.fingerprint(),
+            fingerprint: FingerprintDeriver.derive(from: preset, seed: seed),
+            fingerprintSeed: seed,
             proxy: .direct,
             notes: "Phase automation smoke",
             marionetteEnabled: true,
@@ -219,9 +316,11 @@ enum SmokeTest {
             try ProfileStore.shared.delete(id: existing.id)
         }
 
+        let seed = Profile.makeFingerprintSeed()
         let profile = try ProfileStore.shared.save(Profile(
             name: name,
-            fingerprint: preset.fingerprint(),
+            fingerprint: FingerprintDeriver.derive(from: preset, seed: seed),
+            fingerprintSeed: seed,
             proxy: .direct,
             notes: "Script runner smoke",
             marionetteEnabled: true,
@@ -361,5 +460,47 @@ enum SmokeTest {
             )
         }
         AppLogger.info("[ok] fail script exit=42 stderr captured")
+    }
+
+    private static func permissionsCheck() throws {
+        AppLogger.info("[step] permissions check")
+        try AppPaths.ensureExists()
+        for dir in [AppPaths.supportRoot, AppPaths.profilesDir, AppPaths.runtimeDir, AppPaths.downloadsCacheDir, AppPaths.logsDir, AppPaths.helpersDir] {
+            try assertMode(dir, expected: 0o700)
+        }
+        guard let profile = ProfileStore.shared.list().first else {
+            throw NSError(
+                domain: "Smoke",
+                code: 40,
+                userInfo: [NSLocalizedDescriptionKey: "need at least one profile for permissions check"]
+            )
+        }
+        try assertMode(AppPaths.profileDir(for: profile), expected: 0o700)
+        try assertMode(AppPaths.profileMetaURL(for: profile), expected: 0o600)
+        let release = try CamoufoxRelease.current()
+        let binary = CamoufoxRuntime.shared.expectedBinaryURL(for: release)
+        let hash = try SHA256Hasher.hash(fileAt: binary)
+        let stamp = PrivacySelfTestRunner.stampURL(version: release.version, binaryHash: hash)
+        guard FileManager.default.fileExists(atPath: stamp.path) else {
+            throw NSError(
+                domain: "Smoke",
+                code: 41,
+                userInfo: [NSLocalizedDescriptionKey: "self-test stamp missing: \(stamp.path)"]
+            )
+        }
+        try assertMode(stamp, expected: 0o600)
+        AppLogger.info("[ok] profile/runtime permissions and self-test stamp verified")
+    }
+
+    private static func assertMode(_ url: URL, expected: Int) throws {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let mode = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? -1
+        guard mode & 0o777 == expected else {
+            throw NSError(
+                domain: "Smoke",
+                code: 42,
+                userInfo: [NSLocalizedDescriptionKey: "\(url.path) mode \(String(mode & 0o777, radix: 8)) != \(String(expected, radix: 8))"]
+            )
+        }
     }
 }

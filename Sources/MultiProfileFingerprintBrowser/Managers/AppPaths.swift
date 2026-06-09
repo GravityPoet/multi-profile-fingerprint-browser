@@ -26,6 +26,14 @@ enum AppPaths {
         supportRoot.appendingPathComponent("logs", isDirectory: true)
     }
 
+    static var helpersDir: URL {
+        supportRoot.appendingPathComponent("helpers", isDirectory: true)
+    }
+
+    static var selfTestDir: URL {
+        runtimeDir.appendingPathComponent("selftests", isDirectory: true)
+    }
+
     static func profileDir(for profile: Profile) -> URL {
         profilesDir.appendingPathComponent(profile.directoryName, isDirectory: true)
     }
@@ -44,9 +52,10 @@ enum AppPaths {
 
     /// Create the root + standard subdirectories if missing.
     static func ensureExists() throws {
-        let dirs = [supportRoot, profilesDir, runtimeDir, downloadsCacheDir, logsDir]
+        let dirs = [supportRoot, profilesDir, runtimeDir, downloadsCacheDir, logsDir, helpersDir, selfTestDir]
         for dir in dirs {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         }
     }
 }

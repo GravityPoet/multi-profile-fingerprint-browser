@@ -80,7 +80,7 @@ final class CamoufoxLauncher {
     }
 
     private func notifyChange() {
-        let snapshot = listeners
+        let snapshot = registryQueue.sync { listeners }
         DispatchQueue.main.async { snapshot.forEach { $0() } }
     }
 

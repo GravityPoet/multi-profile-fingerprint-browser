@@ -10,6 +10,8 @@ struct RuntimeStatusBar: View {
             Text(label)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
             Spacer()
             actionButton
         }

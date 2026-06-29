@@ -89,6 +89,11 @@ struct ProfileEditorView: View {
                         TextField(Localization.t("Username (optional)", "用户名（可选）"), text: $draft.proxy.username)
                         SecureField(Localization.t("Password (optional)", "密码（可选）"), text: $draft.proxy.password)
                     }
+                    if let message = draft.proxy.validationMessage {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.system(size: 12))
+                    }
                     if draft.proxy.kind == .none {
                         Label(
                             Localization.t(
@@ -124,7 +129,7 @@ struct ProfileEditorView: View {
                     onSave(draft)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canSave)
             }
         }
         .padding(20)
@@ -133,5 +138,10 @@ struct ProfileEditorView: View {
 
     private var filteredPresets: [FingerprintPreset] {
         showRiskyPresets ? presets : FingerprintPresets.shared.macPresets
+    }
+
+    private var canSave: Bool {
+        !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            draft.proxy.validationMessage == nil
     }
 }

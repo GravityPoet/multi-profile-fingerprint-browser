@@ -79,6 +79,67 @@ enum CamoufoxRuntimeStatus: Equatable {
     case failed(String)
 }
 
+private final class BlockingDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let localTempURL: URL
+    let onProgress: ((Double) -> Void)?
+    private let semaphore = DispatchSemaphore(value: 0)
+
+    private(set) var response: URLResponse?
+    private(set) var error: Error?
+
+    init(localTempURL: URL, onProgress: ((Double) -> Void)?) {
+        self.localTempURL = localTempURL
+        self.onProgress = onProgress
+    }
+
+    func wait() {
+        semaphore.wait()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        let value = min(1, max(0, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+        onProgress?(value)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        do {
+            try? FileManager.default.removeItem(at: localTempURL)
+            try FileManager.default.moveItem(at: location, to: localTempURL)
+        } catch {
+            record(error)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        response = task.response
+        if let error {
+            record(error)
+        }
+        semaphore.signal()
+    }
+
+    private func record(_ newError: Error) {
+        if error == nil {
+            error = newError
+        }
+    }
+}
+
 /// Manages the on-disk Camoufox binary used to launch profiles.
 /// Idempotent: re-running `ensureReady()` after a successful install is a no-op
 /// other than verifying the binary still exists.
@@ -90,13 +151,16 @@ final class CamoufoxRuntime {
     )!
     private let zhCNLanguagePackID = "langpack-zh-CN@firefox.mozilla.org"
     private let zhCNLanguagePackFilename = "langpack-zh-CN@firefox.mozilla.org.xpi"
+    private let ensureQueue = DispatchQueue(label: "local.multi-profile-fingerprint-browser.runtime-ensure")
+    private let statusQueue = DispatchQueue(label: "local.multi-profile-fingerprint-browser.runtime-status")
 
     private(set) var status: CamoufoxRuntimeStatus = .notReady {
         didSet {
-            AppLogger.debug("CamoufoxRuntime status -> \(status)")
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.statusListeners.forEach { $0(self.status) }
+            let nextStatus = status
+            AppLogger.debug("CamoufoxRuntime status -> \(nextStatus)")
+            let snapshot = statusQueue.sync { statusListeners }
+            DispatchQueue.main.async {
+                snapshot.forEach { $0(nextStatus) }
             }
         }
     }
@@ -108,8 +172,13 @@ final class CamoufoxRuntime {
 
     /// Adds a status listener. Called on the main queue.
     func observe(_ listener: @escaping (CamoufoxRuntimeStatus) -> Void) {
-        statusListeners.append(listener)
-        listener(status)
+        let currentStatus = status
+        statusQueue.sync {
+            statusListeners.append(listener)
+        }
+        DispatchQueue.main.async {
+            listener(currentStatus)
+        }
     }
 
     /// Returns the path to the ready Camoufox binary.
@@ -117,6 +186,12 @@ final class CamoufoxRuntime {
     /// Subsequent calls return immediately if the binary is present.
     @discardableResult
     func ensureReady() throws -> URL {
+        try ensureQueue.sync {
+            try ensureReadyLocked()
+        }
+    }
+
+    private func ensureReadyLocked() throws -> URL {
         let release = try CamoufoxRelease.current()
         let binaryURL = expectedBinaryURL(for: release)
 
@@ -163,37 +238,13 @@ final class CamoufoxRuntime {
         status = .downloading(progress: 0)
         AppLogger.info("Downloading Camoufox from \(release.downloadURL.absoluteString)")
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var capturedError: Error?
-        var capturedTempURL: URL?
-        var capturedResponse: URLResponse?
-
-        let task = URLSession.shared.downloadTask(with: release.downloadURL) { tempURL, response, error in
-            capturedTempURL = tempURL
-            capturedResponse = response
-            capturedError = error
-            semaphore.signal()
-        }
-        task.resume()
-        semaphore.wait()
-
-        if let error = capturedError {
-            throw CamoufoxRuntimeError.downloadFailed(release.downloadURL, underlying: error)
-        }
-        if let http = capturedResponse as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw CamoufoxRuntimeError.unexpectedHTTPStatus(http.statusCode, release.downloadURL)
-        }
-        guard let tempURL = capturedTempURL else {
-            throw CamoufoxRuntimeError.downloadFailed(
-                release.downloadURL,
-                underlying: NSError(domain: "CamoufoxRuntime", code: -1)
-            )
-        }
-        do {
-            try FileManager.default.moveItem(at: tempURL, to: archiveURL)
-        } catch {
-            throw CamoufoxRuntimeError.ioFailure(archiveURL, underlying: error)
-        }
+        try downloadFile(
+            from: release.downloadURL,
+            to: archiveURL,
+            progress: { [weak self] progress in
+                self?.status = .downloading(progress: progress)
+            }
+        )
     }
 
     private func verify(archive: URL, expected: String) throws {
@@ -271,36 +322,48 @@ final class CamoufoxRuntime {
         }
 
         AppLogger.info("Downloading Firefox zh-CN language pack from \(zhCNLanguagePackURL.absoluteString)")
-        let semaphore = DispatchSemaphore(value: 0)
-        var capturedError: Error?
-        var capturedTempURL: URL?
-        var capturedResponse: URLResponse?
+        try downloadFile(from: zhCNLanguagePackURL, to: destinationURL, progress: nil)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: destinationURL.path)
+    }
 
-        let task = URLSession.shared.downloadTask(with: zhCNLanguagePackURL) { tempURL, response, error in
-            capturedTempURL = tempURL
-            capturedResponse = response
-            capturedError = error
-            semaphore.signal()
-        }
+    private func downloadFile(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        progress: ((Double) -> Void)?
+    ) throws {
+        try AppPaths.ensureExists()
+        let tmpURL = destinationURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).download")
+        let delegate = BlockingDownloadDelegate(localTempURL: tmpURL, onProgress: progress)
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        let task = session.downloadTask(with: sourceURL)
         task.resume()
-        semaphore.wait()
+        delegate.wait()
+        session.finishTasksAndInvalidate()
 
-        if let error = capturedError {
-            throw CamoufoxRuntimeError.downloadFailed(zhCNLanguagePackURL, underlying: error)
+        defer {
+            try? FileManager.default.removeItem(at: tmpURL)
         }
-        if let http = capturedResponse as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw CamoufoxRuntimeError.unexpectedHTTPStatus(http.statusCode, zhCNLanguagePackURL)
+
+        if let error = delegate.error {
+            throw CamoufoxRuntimeError.downloadFailed(sourceURL, underlying: error)
         }
-        guard let tempURL = capturedTempURL else {
+        if let http = delegate.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw CamoufoxRuntimeError.unexpectedHTTPStatus(http.statusCode, sourceURL)
+        }
+        guard FileManager.default.fileExists(atPath: tmpURL.path) else {
             throw CamoufoxRuntimeError.downloadFailed(
-                zhCNLanguagePackURL,
-                underlying: NSError(domain: "CamoufoxRuntime", code: -2)
+                sourceURL,
+                underlying: NSError(domain: "CamoufoxRuntime", code: -3)
             )
         }
 
         do {
-            try FileManager.default.moveItem(at: tempURL, to: destinationURL)
-            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: destinationURL.path)
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.moveItem(at: tmpURL, to: destinationURL)
         } catch {
             throw CamoufoxRuntimeError.ioFailure(destinationURL, underlying: error)
         }

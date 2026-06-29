@@ -22,6 +22,7 @@ final class AppState: ObservableObject {
     @Published var consistencyCheckMessage: String?
     /// Geo info resolved from proxy exit IP. Passed to launcher for timezone injection.
     private var resolvedGeo: ProxyGeoResolver.GeoInfo?
+    private var runtimeTask: Task<Void, Never>?
 
     private let store = ProfileStore.shared
     private let launcher = CamoufoxLauncher.shared
@@ -63,23 +64,25 @@ final class AppState: ObservableObject {
             marionetteEnabled: false,
             presetID: preset?.id
         )
-        runStoreOperation { try store.save(profile) }
+        _ = saveProfile(profile)
     }
 
-    func updateProfile(_ profile: Profile) {
-        runStoreOperation { try store.save(profile) }
+    @discardableResult
+    func updateProfile(_ profile: Profile) -> Bool {
+        saveProfile(profile)
     }
 
-    func deleteProfile(id: UUID) {
+    @discardableResult
+    func deleteProfile(id: UUID) -> Bool {
         // Refuse to delete a running profile — stop it first.
         if runningProfileIDs.contains(id) {
             lastErrorMessage = Localization.t(
                 "Stop this profile before deleting it.",
                 "请先停止该 Profile 再删除。"
             )
-            return
+            return false
         }
-        runStoreOperation { try store.delete(id: id) }
+        return runStoreOperation { try store.delete(id: id) }
     }
 
     func duplicateProfile(_ profile: Profile) {
@@ -95,7 +98,7 @@ final class AppState: ObservableObject {
             marionetteEnabled: profile.marionetteEnabled,
             presetID: profile.presetID
         )
-        runStoreOperation { _ = try store.save(copy, allowDuplicateName: true) }
+        _ = saveProfile(copy, allowDuplicateName: true)
     }
 
     func randomizeFingerprint(for profile: Profile) {
@@ -105,13 +108,14 @@ final class AppState: ObservableObject {
         updated.fingerprintSeed = seed
         updated.fingerprint = FingerprintDeriver.derive(from: preset, seed: seed)
         updated.presetID = preset?.id
-        runStoreOperation { try store.save(updated, allowDuplicateName: true) }
+        _ = saveProfile(updated, allowDuplicateName: true)
     }
 
     // MARK: Launch
 
     func launchProfile(id: UUID) {
         guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        clearLaunchPrompts()
 
         // If runtime is not ready, kick off download first.
         if case .ready = runtimeStatus {
@@ -122,6 +126,11 @@ final class AppState: ObservableObject {
                 "运行时尚未就绪，请先点击\"下载运行时\"。"
             )
             ensureRuntimeReadyInBackground()
+            return
+        }
+
+        if let message = profile.proxy.validationMessage {
+            lastErrorMessage = message
             return
         }
 
@@ -148,6 +157,9 @@ final class AppState: ObservableObject {
     func cancelNoProxyLaunch() {
         showNoProxyAlert = false
         pendingLaunchProfileID = nil
+        proxyCheckMessage = nil
+        consistencyCheckMessage = nil
+        resolvedGeo = nil
     }
 
     private func validateProxyAndLaunch(profile: Profile) {
@@ -163,6 +175,7 @@ final class AppState: ObservableObject {
                 switch result {
                 case .ok(let exitIP):
                     // Resolve geo from exit IP, then launch.
+                    self.isCheckingProxy = true
                     self.resolveGeoAndLaunch(profile: profile, exitIP: exitIP)
                 case .warning(let msg):
                     // Non-blocking: warn but allow launch.
@@ -197,11 +210,15 @@ final class AppState: ObservableObject {
     func cancelConsistencyFailLaunch() {
         showConsistencyFailAlert = false
         pendingLaunchProfileID = nil
+        consistencyCheckMessage = nil
+        resolvedGeo = nil
     }
 
     func cancelProxyFailLaunch() {
         showProxyFailAlert = false
         pendingLaunchProfileID = nil
+        proxyCheckMessage = nil
+        resolvedGeo = nil
     }
 
     private func resolveGeoAndLaunch(profile: Profile, exitIP: String) {
@@ -209,9 +226,17 @@ final class AppState: ObservableObject {
             guard let self else { return }
             let geo = await ProxyGeoResolver.resolve(profile.proxy)
             await MainActor.run {
+                self.isCheckingProxy = false
                 self.resolvedGeo = geo
                 if let geo {
-                    AppLogger.info("Resolved proxy geo: tz=\(geo.timezone) country=\(geo.country)")
+                    let mismatch = !geo.ip.isEmpty && geo.ip != exitIP
+                    AppLogger.info("Resolved proxy geo: tz=\(geo.timezone) country=\(geo.country) ip=\(geo.ip)")
+                    if mismatch {
+                        self.proxyCheckMessage = Localization.t(
+                            "Proxy exit IP changed between checks: \(exitIP) -> \(geo.ip).",
+                            "代理出口 IP 在检测期间发生变化：\(exitIP) -> \(geo.ip)。"
+                        )
+                    }
                 } else {
                     AppLogger.warn("Proxy geo resolution failed; will use fallback timezone")
                 }
@@ -236,6 +261,9 @@ final class AppState: ObservableObject {
         }
         do {
             _ = try launcher.launch(profile, geo: geo, skipConsistencyGate: skipConsistencyGate)
+            pendingLaunchProfileID = nil
+            resolvedGeo = nil
+            consistencyCheckMessage = nil
             refreshRunning()
         } catch {
             AppLogger.error("launch failed: \(error.localizedDescription)")
@@ -254,16 +282,24 @@ final class AppState: ObservableObject {
     // MARK: Runtime
 
     func ensureRuntimeReadyInBackground() {
-        Task.detached(priority: .userInitiated) {
+        guard runtimeTask == nil else { return }
+        runtimeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            var runtimeError: Error?
             do {
                 _ = try CamoufoxRuntime.shared.ensureReady()
             } catch {
-                await MainActor.run {
-                    AppLogger.error("runtime not ready: \(error.localizedDescription)")
-                    self.lastErrorMessage = error.localizedDescription
-                }
+                runtimeError = error
             }
+            await self?.finishRuntimeEnsure(error: runtimeError)
         }
+    }
+
+    private func finishRuntimeEnsure(error: Error?) {
+        if let error {
+            AppLogger.error("runtime not ready: \(error.localizedDescription)")
+            lastErrorMessage = error.localizedDescription
+        }
+        runtimeTask = nil
     }
 
     // MARK: Helpers
@@ -282,13 +318,45 @@ final class AppState: ObservableObject {
         runningProfileIDs = Set(snapshots.keys)
     }
 
-    private func runStoreOperation(_ op: () throws -> Void) {
+    private func normalizedForStorage(_ profile: Profile) -> Profile {
+        var copy = profile
+        copy.name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.proxy = profile.proxy.normalizedForStorage
+        return copy
+    }
+
+    @discardableResult
+    private func saveProfile(_ profile: Profile, allowDuplicateName: Bool = false) -> Bool {
+        let normalized = normalizedForStorage(profile)
+        if let message = normalized.proxy.validationMessage {
+            lastErrorMessage = message
+            return false
+        }
+        return runStoreOperation {
+            try store.save(normalized, allowDuplicateName: allowDuplicateName)
+        }
+    }
+
+    private func clearLaunchPrompts() {
+        showNoProxyAlert = false
+        showProxyFailAlert = false
+        showConsistencyFailAlert = false
+        pendingLaunchProfileID = nil
+        proxyCheckMessage = nil
+        consistencyCheckMessage = nil
+        resolvedGeo = nil
+    }
+
+    @discardableResult
+    private func runStoreOperation(_ op: () throws -> Void) -> Bool {
         do {
             try op()
             reloadProfiles()
+            return true
         } catch {
             AppLogger.error("store op failed: \(error.localizedDescription)")
             lastErrorMessage = error.localizedDescription
+            return false
         }
     }
 }

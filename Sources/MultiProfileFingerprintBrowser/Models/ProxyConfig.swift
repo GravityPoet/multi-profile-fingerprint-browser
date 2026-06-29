@@ -35,6 +35,37 @@ struct ProxyConfig: Codable, Hashable {
         !username.isEmpty || !password.isEmpty
     }
 
+    var normalizedForStorage: ProxyConfig {
+        var copy = self
+        copy.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        if copy.kind == .none {
+            copy.host = ""
+            copy.port = 0
+            copy.username = ""
+            copy.password = ""
+        }
+        return copy
+    }
+
+    var validationMessage: String? {
+        let normalized = normalizedForStorage
+        guard normalized.kind != .none else { return nil }
+        if normalized.host.isEmpty {
+            return Localization.t(
+                "Proxy host is required.",
+                "代理主机不能为空。"
+            )
+        }
+        if !(1...65535).contains(normalized.port) {
+            return Localization.t(
+                "Proxy port must be between 1 and 65535.",
+                "代理端口必须在 1 到 65535 之间。"
+            )
+        }
+        return nil
+    }
+
     /// Firefox prefs for writing into the per-profile `user.js`.
     /// Authentication via username/password is handled separately at
     /// runtime (Firefox does not accept inline auth in proxy prefs).
@@ -78,9 +109,11 @@ struct ProxyConfig: Codable, Hashable {
         case .none:
             return Localization.t("Direct", "直连")
         case .http:
-            return "HTTP \(host):\(port)"
+            let proxy = normalizedForStorage
+            return "HTTP \(proxy.host):\(proxy.port)"
         case .socks5:
-            return "SOCKS5 \(host):\(port)"
+            let proxy = normalizedForStorage
+            return "SOCKS5 \(proxy.host):\(proxy.port)"
         }
     }
 }

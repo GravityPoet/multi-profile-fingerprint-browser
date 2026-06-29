@@ -7,7 +7,7 @@ struct RootView: View {
     @State private var selection: UUID?
     @State private var editingProfile: Profile?
     @State private var isNewProfile = false
-    @State private var selectedScriptPath: String?
+    @State private var selectedScriptPathsByProfileID: [UUID: String] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,8 +33,10 @@ struct RootView: View {
                 ),
                 isNew: isNewProfile,
                 onSave: { saved in
-                    state.updateProfile(saved)
-                    editingProfile = nil
+                    if state.updateProfile(saved) {
+                        selection = saved.id
+                        editingProfile = nil
+                    }
                 },
                 onCancel: { editingProfile = nil },
                 onRandomize: {
@@ -136,7 +138,10 @@ struct RootView: View {
             .disabled(selection == nil)
 
             Button {
-                if let id = selection { state.deleteProfile(id: id); selection = nil }
+                if let id = selection, state.deleteProfile(id: id) {
+                    selectedScriptPathsByProfileID.removeValue(forKey: id)
+                    selection = nil
+                }
             } label: {
                 Label(Localization.t("Delete", "删除"), systemImage: "trash")
             }
@@ -144,12 +149,21 @@ struct RootView: View {
 
             Spacer()
 
+            if state.isCheckingProxy {
+                ProgressView()
+                    .scaleEffect(0.55)
+                    .frame(width: 14, height: 14)
+                Text(Localization.t("Checking proxy…", "正在检测代理…"))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+
             Button {
                 if let id = selection { state.launchProfile(id: id) }
             } label: {
                 Label(Localization.t("Launch", "启动"), systemImage: "play.fill")
             }
-            .disabled(selection == nil || isSelectedRunning())
+            .disabled(selection == nil || isSelectedRunning() || state.isCheckingProxy || !isRuntimeReady())
 
             Button {
                 if let id = selection { state.terminateProfile(id: id) }
@@ -326,6 +340,7 @@ struct RootView: View {
         let isProfileRunning = runningInfo != nil
         let isScriptRunning = scriptRunner.isRunning(profileID: profile.id)
         let lastRun = scriptRunner.currentOrLastRun(for: profile.id)
+        let selectedScriptPath = selectedScriptPathsByProfileID[profile.id]
 
         return VStack(alignment: .leading, spacing: 10) {
             Text(Localization.t("Script Runner", "脚本执行器"))
@@ -341,7 +356,7 @@ struct RootView: View {
             } else {
                 HStack(spacing: 8) {
                     Button {
-                        selectScriptFile()
+                        selectScriptFile(for: profile.id)
                     } label: {
                         Label(
                             selectedScriptPath.map { URL(fileURLWithPath: $0).lastPathComponent }
@@ -449,19 +464,19 @@ struct RootView: View {
         }
     }
 
-    private func selectScriptFile() {
+    private func selectScriptFile(for profileID: UUID) {
         let panel = NSOpenPanel()
         panel.title = Localization.t("Select Script", "选择脚本")
         panel.allowedContentTypes = [.unixExecutable, .shellScript, .pythonScript, .perlScript, .rubyScript]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
-            selectedScriptPath = url.path
+            selectedScriptPathsByProfileID[profileID] = url.path
         }
     }
 
     private func runScript(profile: Profile, runningInfo: RunningProfileInfo) {
-        guard let scriptPath = selectedScriptPath else { return }
+        guard let scriptPath = selectedScriptPathsByProfileID[profile.id] else { return }
         do {
             _ = try scriptRunner.start(
                 scriptPath: scriptPath,
@@ -522,6 +537,13 @@ struct RootView: View {
     private func isSelectedRunning() -> Bool {
         guard let id = selection else { return false }
         return state.runningProfileIDs.contains(id)
+    }
+
+    private func isRuntimeReady() -> Bool {
+        if case .ready = state.runtimeStatus {
+            return true
+        }
+        return false
     }
 
     private func beginNew() {
